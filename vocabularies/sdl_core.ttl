@@ -1,0 +1,643 @@
+@prefix sdl:    <http://example.org/sdl#> .
+@prefix rdf:    <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:   <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:    <http://www.w3.org/2001/XMLSchema#> .
+@prefix owl:    <http://www.w3.org/2002/07/owl#> .
+@prefix skos:   <http://www.w3.org/2004/02/skos/core#> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+
+# =============================================================================
+# SDL: Structural Data Language — Core Vocabulary
+# =============================================================================
+#
+# A vocabulary for expressing structural knowledge about data beyond what is
+# captured by storage formats alone. Covers: schemas, semantic types,
+# constraints, derivations, aggregation relationships, physical layout,
+# provenance, and known deficiencies.
+#
+# Design principles:
+#   1. Combinators over opaque leaves: the system reasons about structure;
+#      domain-specific semantics live in extensible leaf terms.
+#   2. Description and verification are decoupled: the graph records what is
+#      asserted; verification is performed by external tools whose results
+#      are themselves recorded in the graph.
+#   3. Physical and logical are both first-class: storage layout (ordering,
+#      partitioning, file format) carries semantic weight and is expressible.
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# 1. Datasets, Files, and Schemas
+# -----------------------------------------------------------------------------
+
+sdl:Dataset a rdfs:Class ;
+    rdfs:comment """A logical collection of data files sharing a common schema
+        and structural invariants. A dataset may be partitioned across many
+        physical files.""" .
+
+sdl:DataFile a rdfs:Class ;
+    rdfs:comment "A single physical data file within a dataset." .
+
+sdl:Column a rdfs:Class ;
+    rdfs:comment "A column within a dataset's schema." .
+
+sdl:ColumnGroup a rdfs:Class ;
+    rdfs:comment """A named group of columns that together carry a composite
+        semantic meaning (e.g. a coordinate pair, an address).""" .
+
+# --- Dataset properties ---
+
+sdl:hasColumn a rdf:Property ;
+    rdfs:domain sdl:Dataset ;
+    rdfs:range sdl:Column ;
+    rdfs:comment "Links a dataset to a column in its schema." .
+
+sdl:hasColumnGroup a rdf:Property ;
+    rdfs:domain sdl:Dataset ;
+    rdfs:range sdl:ColumnGroup ;
+    rdfs:comment "Links a dataset to a composite column group." .
+
+sdl:partitionedBy a rdf:Property ;
+    rdfs:domain sdl:Dataset ;
+    rdfs:range sdl:PartitionScheme ;
+    rdfs:comment "Declares how a dataset is split across physical files." .
+
+# --- Column properties ---
+
+sdl:columnName a rdf:Property ;
+    rdfs:domain sdl:Column ;
+    rdfs:range xsd:string ;
+    rdfs:comment "The physical column name in the storage format." .
+
+sdl:physicalType a rdf:Property ;
+    rdfs:domain sdl:Column ;
+    rdfs:range sdl:PhysicalType ;
+    rdfs:comment """The expected storage-level type (e.g. Parquet logical type).
+        Validators can check actual file metadata against this declaration.""" .
+
+sdl:semanticType a rdf:Property ;
+    rdfs:domain sdl:Column ;
+    rdfs:range sdl:SemanticType ;
+    rdfs:comment "The domain-meaningful type of values in this column." .
+
+sdl:nullable a rdf:Property ;
+    rdfs:domain sdl:Column ;
+    rdfs:range xsd:boolean ;
+    rdfs:comment "Whether null values are expected/permitted." .
+
+sdl:memberOf a rdf:Property ;
+    rdfs:domain sdl:Column ;
+    rdfs:range sdl:ColumnGroup ;
+    rdfs:comment "Links a column to a column group it participates in." .
+
+# --- ColumnGroup properties ---
+
+sdl:groupSemanticType a rdf:Property ;
+    rdfs:domain sdl:ColumnGroup ;
+    rdfs:range sdl:SemanticType ;
+    rdfs:comment "The composite semantic type of the column group." .
+
+sdl:groupMember a rdf:Property ;
+    rdfs:domain sdl:ColumnGroup ;
+    rdfs:range sdl:Column ;
+    rdfs:comment "A column that participates in this group." .
+
+sdl:memberRole a rdf:Property ;
+    rdfs:comment """The role a column plays within a group (e.g. 'latitude'
+        within a coordinate pair). Domain is a blank node linking column
+        to group.""" .
+
+
+# -----------------------------------------------------------------------------
+# 2. Physical Types
+# -----------------------------------------------------------------------------
+#
+# These correspond to storage-format types (Parquet logical types, etc.).
+# The point is to catch mismatches between declared and actual types —
+# e.g. MMSI stored as VARCHAR when it should be INTEGER.
+# -----------------------------------------------------------------------------
+
+sdl:PhysicalType a rdfs:Class ;
+    rdfs:comment "A storage-level data type." .
+
+# Parquet logical types
+sdl:Integer       a sdl:PhysicalType ; rdfs:label "INTEGER" .
+sdl:BigInt        a sdl:PhysicalType ; rdfs:label "BIGINT" .
+sdl:UBigInt       a sdl:PhysicalType ; rdfs:label "UBIGINT" .
+sdl:Double        a sdl:PhysicalType ; rdfs:label "DOUBLE" .
+sdl:Varchar       a sdl:PhysicalType ; rdfs:label "VARCHAR" .
+sdl:Date          a sdl:PhysicalType ; rdfs:label "DATE" .
+sdl:TimestampTZ   a sdl:PhysicalType ; rdfs:label "TIMESTAMP WITH TIME ZONE" .
+sdl:Blob          a sdl:PhysicalType ; rdfs:label "BLOB" .
+sdl:IntegerList   a sdl:PhysicalType ; rdfs:label "INTEGER[]" .
+sdl:DoubleList    a sdl:PhysicalType ; rdfs:label "DOUBLE[]" .
+sdl:VarcharList   a sdl:PhysicalType ; rdfs:label "VARCHAR[]" .
+
+# Type compatibility (e.g. Integer is narrower than BigInt)
+sdl:narrowerThan a rdf:Property ;
+    rdfs:domain sdl:PhysicalType ;
+    rdfs:range sdl:PhysicalType ;
+    rdfs:comment "This type can safely widen to the target type." .
+
+sdl:Integer sdl:narrowerThan sdl:BigInt .
+sdl:BigInt  sdl:narrowerThan sdl:Double .
+
+
+# -----------------------------------------------------------------------------
+# 3. Semantic Types
+# -----------------------------------------------------------------------------
+#
+# URI-identified types that carry domain meaning. Each semantic type may
+# declare a required physical type, value constraints, and metadata.
+# These are the "opaque leaves" in the combinator framework.
+# -----------------------------------------------------------------------------
+
+sdl:SemanticType a rdfs:Class ;
+    rdfs:comment """A domain-meaningful type. Identified by URI, extensible
+        without modifying the core vocabulary.""" .
+
+sdl:requiredPhysicalType a rdf:Property ;
+    rdfs:domain sdl:SemanticType ;
+    rdfs:range sdl:PhysicalType ;
+    rdfs:comment """The physical type that a column of this semantic type MUST
+        have. A mismatch is a validation error. This is the property that
+        would have caught the MMSI-as-string bug.""" .
+
+sdl:acceptablePhysicalType a rdf:Property ;
+    rdfs:domain sdl:SemanticType ;
+    rdfs:range sdl:PhysicalType ;
+    rdfs:comment "A physical type that is acceptable (when multiple are OK)." .
+
+sdl:valueRange a rdf:Property ;
+    rdfs:domain sdl:SemanticType ;
+    rdfs:range sdl:ValueRange ;
+    rdfs:comment "Declares the valid value range for this type." .
+
+sdl:unit a rdf:Property ;
+    rdfs:domain sdl:SemanticType ;
+    rdfs:range xsd:string ;
+    rdfs:comment "The unit of measurement (e.g. 'degrees', 'knots', 'metres')." .
+
+sdl:ValueRange a rdfs:Class .
+sdl:minInclusive a rdf:Property ; rdfs:domain sdl:ValueRange ; rdfs:range xsd:decimal .
+sdl:maxInclusive a rdf:Property ; rdfs:domain sdl:ValueRange ; rdfs:range xsd:decimal .
+sdl:minExclusive a rdf:Property ; rdfs:domain sdl:ValueRange ; rdfs:range xsd:decimal .
+sdl:maxExclusive a rdf:Property ; rdfs:domain sdl:ValueRange ; rdfs:range xsd:decimal .
+
+
+# -----------------------------------------------------------------------------
+# 4. Constraints
+# -----------------------------------------------------------------------------
+#
+# The combinator layer. Constraints compose structurally; the system
+# can reason about them without understanding leaf predicates.
+# -----------------------------------------------------------------------------
+
+sdl:Constraint a rdfs:Class ;
+    rdfs:comment "Base class for all constraints." .
+
+# --- Constraint targets ---
+# What does the constraint apply to?
+
+sdl:appliesToDataset a rdf:Property ;
+    rdfs:range sdl:Dataset .
+
+sdl:appliesToColumn a rdf:Property ;
+    rdfs:range sdl:Column .
+
+sdl:appliesToColumnGroup a rdf:Property ;
+    rdfs:range sdl:ColumnGroup .
+
+# --- Constraint signatures ---
+# What kind of input does the constraint operate on?
+
+sdl:ConstraintSignature a rdfs:Class .
+
+sdl:ScalarConstraint rdfs:subClassOf sdl:Constraint ;
+    rdfs:comment "Constraint on individual scalar values." .
+
+sdl:PairConstraint rdfs:subClassOf sdl:Constraint ;
+    rdfs:comment "Constraint on pairs/tuples of values from multiple columns." .
+
+sdl:SequenceConstraint rdfs:subClassOf sdl:Constraint ;
+    rdfs:comment "Constraint on an ordered sequence of values." .
+
+sdl:WindowedSequenceConstraint rdfs:subClassOf sdl:Constraint ;
+    rdfs:comment """Constraint on sliding windows over an ordered sequence
+        (e.g. consecutive pairs).""" .
+
+sdl:DatasetConstraint rdfs:subClassOf sdl:Constraint ;
+    rdfs:comment "Constraint on a dataset as a whole." .
+
+sdl:GroupedConstraint rdfs:subClassOf sdl:Constraint ;
+    rdfs:comment "Constraint that applies within groups defined by a key." .
+
+# --- Combinators ---
+
+sdl:ForEach a rdfs:Class ;
+    rdfs:subClassOf sdl:Constraint ;
+    rdfs:comment "Apply a scalar constraint to every value in a column." .
+
+sdl:Paired a rdfs:Class ;
+    rdfs:subClassOf sdl:Constraint ;
+    rdfs:comment "Apply a constraint to tuples drawn from a column group." .
+
+sdl:Ordered a rdfs:Class ;
+    rdfs:subClassOf sdl:Constraint ;
+    rdfs:comment """Apply a sequence constraint to values ordered by a
+        specified column.""" .
+
+sdl:Grouped a rdfs:Class ;
+    rdfs:subClassOf sdl:Constraint ;
+    rdfs:comment """Apply a constraint within each group defined by a
+        grouping column.""" .
+
+sdl:Conditional a rdfs:Class ;
+    rdfs:subClassOf sdl:Constraint ;
+    rdfs:comment "Apply a constraint only when a predicate holds." .
+
+sdl:And a rdfs:Class ;
+    rdfs:subClassOf sdl:Constraint ;
+    rdfs:comment "All component constraints must hold." .
+
+sdl:Or a rdfs:Class ;
+    rdfs:subClassOf sdl:Constraint ;
+    rdfs:comment "At least one component constraint must hold." .
+
+# Combinator properties
+sdl:innerConstraint a rdf:Property ;
+    rdfs:comment "The constraint being composed by a combinator." .
+
+sdl:groupingColumn a rdf:Property ;
+    rdfs:comment "The column defining groups for a Grouped combinator." .
+
+sdl:orderingColumn a rdf:Property ;
+    rdfs:comment "The column defining order for an Ordered combinator." .
+
+sdl:predicate a rdf:Property ;
+    rdfs:comment "The predicate for a Conditional combinator." .
+
+sdl:components a rdf:Property ;
+    rdfs:comment "The component constraints for And/Or combinators." .
+
+# --- Computational profile ---
+# How expensive is it to verify this constraint?
+
+sdl:ComputationalProfile a rdfs:Class .
+sdl:SchemaCheckOnly   a sdl:ComputationalProfile ;
+    rdfs:comment "Checkable from file metadata alone (e.g. physical type)." .
+sdl:PerValueCheck     a sdl:ComputationalProfile ;
+    rdfs:comment "Requires scanning individual values." .
+sdl:FullScanRequired  a sdl:ComputationalProfile ;
+    rdfs:comment "Requires reading the entire column/dataset." .
+sdl:SequentialScan    a sdl:ComputationalProfile ;
+    rdfs:comment "Requires reading values in order (e.g. monotonicity)." .
+sdl:ExternalService   a sdl:ComputationalProfile ;
+    rdfs:comment "Requires calling an external service (e.g. address validation)." .
+
+sdl:computationalProfile a rdf:Property ;
+    rdfs:domain sdl:Constraint ;
+    rdfs:range sdl:ComputationalProfile .
+
+# --- Validators ---
+
+sdl:Validator a rdfs:Class .
+sdl:PythonValidator rdfs:subClassOf sdl:Validator .
+sdl:SPARQLValidator rdfs:subClassOf sdl:Validator .
+sdl:DuckDBValidator rdfs:subClassOf sdl:Validator .
+
+sdl:validator a rdf:Property ;
+    rdfs:domain sdl:Constraint ;
+    rdfs:range sdl:Validator .
+
+sdl:module a rdf:Property ;
+    rdfs:domain sdl:PythonValidator ;
+    rdfs:range xsd:string .
+
+sdl:function a rdf:Property ;
+    rdfs:domain sdl:PythonValidator ;
+    rdfs:range xsd:string .
+
+sdl:query a rdf:Property ;
+    rdfs:domain sdl:DuckDBValidator ;
+    rdfs:range xsd:string .
+
+
+# -----------------------------------------------------------------------------
+# 5. Derivations
+# -----------------------------------------------------------------------------
+#
+# Functional dependencies between columns or between datasets.
+# "Column X is computed from columns Y, Z via function F."
+# -----------------------------------------------------------------------------
+
+sdl:Derivation a rdfs:Class ;
+    rdfs:comment """A declaration that one column or dataset is derived from
+        others via a known function.""" .
+
+sdl:derivedColumn a rdf:Property ;
+    rdfs:domain sdl:Derivation ;
+    rdfs:range sdl:Column .
+
+sdl:sourceColumn a rdf:Property ;
+    rdfs:domain sdl:Derivation ;
+    rdfs:range sdl:Column .
+
+sdl:derivationFunction a rdf:Property ;
+    rdfs:domain sdl:Derivation ;
+    rdfs:range rdfs:Resource ;
+    rdfs:comment "URI identifying the derivation function." .
+
+sdl:DerivationProperty a rdfs:Class .
+sdl:Deterministic a sdl:DerivationProperty ;
+    rdfs:comment "Same inputs always produce same output." .
+sdl:Invertible a sdl:DerivationProperty ;
+    rdfs:comment "The derivation can be reversed." .
+sdl:Lossy a sdl:DerivationProperty ;
+    rdfs:comment "Information is lost in the derivation." .
+
+sdl:hasDerivationProperty a rdf:Property ;
+    rdfs:domain sdl:Derivation ;
+    rdfs:range sdl:DerivationProperty .
+
+
+# -----------------------------------------------------------------------------
+# 6. Aggregation Relationships
+# -----------------------------------------------------------------------------
+#
+# "Dataset B is an aggregation of Dataset A, grouped by column K,
+#  with column B.x = AGG(A.y) within each group."
+# -----------------------------------------------------------------------------
+
+sdl:AggregationRelationship a rdfs:Class ;
+    rdfs:comment """Declares that a target dataset is derived from a source
+        dataset by grouping and aggregating.""" .
+
+sdl:sourceDataset a rdf:Property ;
+    rdfs:domain sdl:AggregationRelationship ;
+    rdfs:range sdl:Dataset .
+
+sdl:targetDataset a rdf:Property ;
+    rdfs:domain sdl:AggregationRelationship ;
+    rdfs:range sdl:Dataset .
+
+sdl:groupByColumn a rdf:Property ;
+    rdfs:domain sdl:AggregationRelationship ;
+    rdfs:range sdl:Column ;
+    rdfs:comment "The column(s) defining groups in the source dataset." .
+
+sdl:hasAggregatedColumn a rdf:Property ;
+    rdfs:domain sdl:AggregationRelationship ;
+    rdfs:range sdl:AggregatedColumn .
+
+sdl:AggregatedColumn a rdfs:Class ;
+    rdfs:comment "Defines how one target column is derived from source columns." .
+
+sdl:targetColumn a rdf:Property ;
+    rdfs:domain sdl:AggregatedColumn ;
+    rdfs:range sdl:Column .
+
+sdl:aggregationSourceColumn a rdf:Property ;
+    rdfs:domain sdl:AggregatedColumn ;
+    rdfs:range sdl:Column .
+
+sdl:aggregationFunction a rdf:Property ;
+    rdfs:domain sdl:AggregatedColumn ;
+    rdfs:range rdfs:Resource ;
+    rdfs:comment "URI of the aggregation function." .
+
+sdl:withinGroupOrdering a rdf:Property ;
+    rdfs:domain sdl:AggregatedColumn ;
+    rdfs:range sdl:Column ;
+    rdfs:comment """The column that defines ordering within groups, required
+        for order-dependent aggregations.""" .
+
+# --- Standard aggregation functions ---
+
+sdl:Min a rdfs:Resource ; rdfs:label "MIN" .
+sdl:Max a rdfs:Resource ; rdfs:label "MAX" .
+sdl:Mean a rdfs:Resource ; rdfs:label "MEAN / AVG" .
+sdl:Sum a rdfs:Resource ; rdfs:label "SUM" .
+sdl:Count a rdfs:Resource ; rdfs:label "COUNT" .
+sdl:CountDistinct a rdfs:Resource ; rdfs:label "COUNT DISTINCT" .
+sdl:DistinctList a rdfs:Resource ; rdfs:label "LIST of DISTINCT values" .
+sdl:First a rdfs:Resource ; rdfs:label "First value in ordered sequence" .
+sdl:Last a rdfs:Resource ; rdfs:label "Last value in ordered sequence" .
+
+
+# -----------------------------------------------------------------------------
+# 7. Physical Layout
+# -----------------------------------------------------------------------------
+#
+# How the data is physically arranged: ordering within files,
+# partitioning across files, file format.
+# -----------------------------------------------------------------------------
+
+sdl:PhysicalLayout a rdfs:Class .
+
+sdl:hasPhysicalLayout a rdf:Property ;
+    rdfs:domain sdl:Dataset ;
+    rdfs:range sdl:PhysicalLayout .
+
+sdl:fileFormat a rdf:Property ;
+    rdfs:domain sdl:PhysicalLayout ;
+    rdfs:range xsd:string ;
+    rdfs:comment "E.g. 'parquet', 'csv', 'orc'." .
+
+# --- Row ordering ---
+
+sdl:RowOrdering a rdfs:Class .
+sdl:hasRowOrdering a rdf:Property ;
+    rdfs:domain sdl:PhysicalLayout ;
+    rdfs:range sdl:RowOrdering .
+
+sdl:OrderingKey a rdfs:Class .
+sdl:hasOrderingKey a rdf:Property ;
+    rdfs:domain sdl:RowOrdering ;
+    rdfs:range sdl:OrderingKey .
+
+sdl:keyColumn a rdf:Property ;
+    rdfs:domain sdl:OrderingKey ;
+    rdfs:range sdl:Column .
+
+sdl:keyDirection a rdf:Property ;
+    rdfs:domain sdl:OrderingKey ;
+    rdfs:range xsd:string ;
+    rdfs:comment "Either 'ascending' or 'descending'." .
+
+sdl:keyPrecedence a rdf:Property ;
+    rdfs:domain sdl:OrderingKey ;
+    rdfs:range xsd:integer ;
+    rdfs:comment "1 = primary, 2 = secondary, etc." .
+
+sdl:orderingSemantic a rdf:Property ;
+    rdfs:domain sdl:OrderingKey ;
+    rdfs:range sdl:OrderingSemanticType ;
+    rdfs:comment """Why this ordering exists. Distinguishes 'clustering for
+        index efficiency' from 'meaningful temporal sequence'.""" .
+
+sdl:OrderingSemanticType a rdfs:Class .
+sdl:ClusteringForIndex a sdl:OrderingSemanticType ;
+    rdfs:comment "Equal values are grouped for min/max index efficiency." .
+sdl:MeaningfulSequence a sdl:OrderingSemanticType ;
+    rdfs:comment "The order carries domain meaning (e.g. temporal trajectory)." .
+sdl:PerformanceOnly a sdl:OrderingSemanticType ;
+    rdfs:comment "Ordering exists solely for query performance." .
+
+# --- Partition scheme ---
+
+sdl:PartitionScheme a rdfs:Class .
+
+sdl:partitionColumn a rdf:Property ;
+    rdfs:domain sdl:PartitionScheme ;
+    rdfs:range sdl:Column ;
+    rdfs:comment "Column whose values determine which file a row lives in." .
+
+sdl:partitionGranularity a rdf:Property ;
+    rdfs:domain sdl:PartitionScheme ;
+    rdfs:range xsd:string ;
+    rdfs:comment "E.g. 'daily', 'monthly', 'by_value'." .
+
+sdl:pathTemplate a rdf:Property ;
+    rdfs:domain sdl:PartitionScheme ;
+    rdfs:range xsd:string ;
+    rdfs:comment """Path template with placeholders, e.g.
+        'broadcasts/{year}/ais-{date}.parquet'""" .
+
+sdl:redundantPartitionKey a rdf:Property ;
+    rdfs:domain sdl:PartitionScheme ;
+    rdfs:range sdl:Column ;
+    rdfs:comment """A column embedded in the data whose value is constant
+        within each partition and matches the partition value.
+        Exists for query convenience.""" .
+
+
+# -----------------------------------------------------------------------------
+# 8. Provenance and Known Deficiencies
+# -----------------------------------------------------------------------------
+
+sdl:Provenance a rdfs:Class .
+
+sdl:hasProvenance a rdf:Property ;
+    rdfs:domain sdl:Dataset ;
+    rdfs:range sdl:Provenance .
+
+sdl:source a rdf:Property ;
+    rdfs:domain sdl:Provenance ;
+    rdfs:range rdfs:Resource ;
+    rdfs:comment "URI of the upstream data source." .
+
+sdl:sourceDescription a rdf:Property ;
+    rdfs:domain sdl:Provenance ;
+    rdfs:range xsd:string .
+
+sdl:Transformation a rdfs:Class .
+sdl:hasTransformation a rdf:Property ;
+    rdfs:domain sdl:Provenance ;
+    rdfs:range sdl:Transformation .
+
+sdl:transformationType a rdf:Property ;
+    rdfs:domain sdl:Transformation ;
+    rdfs:range xsd:string .
+
+sdl:transformationDescription a rdf:Property ;
+    rdfs:domain sdl:Transformation ;
+    rdfs:range xsd:string .
+
+# --- Known deficiencies ---
+# Things the data SHOULD satisfy but DOESN'T, and we know it.
+
+sdl:KnownDeficiency a rdfs:Class ;
+    rdfs:comment """A known way in which the data fails to satisfy an ideal
+        invariant. Crucial for integration: tells a consumer what NOT
+        to assume.""" .
+
+sdl:hasKnownDeficiency a rdf:Property ;
+    rdfs:domain sdl:Dataset ;
+    rdfs:range sdl:KnownDeficiency .
+
+sdl:deficiencyDescription a rdf:Property ;
+    rdfs:domain sdl:KnownDeficiency ;
+    rdfs:range xsd:string .
+
+sdl:violatedInvariant a rdf:Property ;
+    rdfs:domain sdl:KnownDeficiency ;
+    rdfs:range sdl:Constraint ;
+    rdfs:comment """The constraint that WOULD hold on ideal data but does not
+        hold here.""" .
+
+sdl:impact a rdf:Property ;
+    rdfs:domain sdl:KnownDeficiency ;
+    rdfs:range xsd:string ;
+    rdfs:comment "Description of downstream effects." .
+
+sdl:severity a rdf:Property ;
+    rdfs:domain sdl:KnownDeficiency ;
+    rdfs:range xsd:string ;
+    rdfs:comment "E.g. 'minor', 'moderate', 'severe'." .
+
+
+# -----------------------------------------------------------------------------
+# 9. Verification Attestations
+# -----------------------------------------------------------------------------
+#
+# Records of validation runs: who checked what, when, with what result.
+# These are themselves part of the graph.
+# -----------------------------------------------------------------------------
+
+sdl:VerificationAttestation a rdfs:Class .
+
+sdl:verifiedConstraint a rdf:Property ;
+    rdfs:domain sdl:VerificationAttestation ;
+    rdfs:range sdl:Constraint .
+
+sdl:verifiedDataset a rdf:Property ;
+    rdfs:domain sdl:VerificationAttestation ;
+    rdfs:range sdl:Dataset .
+
+sdl:verifiedFile a rdf:Property ;
+    rdfs:domain sdl:VerificationAttestation ;
+    rdfs:range sdl:DataFile .
+
+sdl:verificationTime a rdf:Property ;
+    rdfs:domain sdl:VerificationAttestation ;
+    rdfs:range xsd:dateTime .
+
+sdl:verificationResult a rdf:Property ;
+    rdfs:domain sdl:VerificationAttestation ;
+    rdfs:range xsd:string ;
+    rdfs:comment "E.g. 'pass', 'fail', 'partial', 'error'." .
+
+sdl:verificationTool a rdf:Property ;
+    rdfs:domain sdl:VerificationAttestation ;
+    rdfs:range rdfs:Resource .
+
+sdl:verificationDetails a rdf:Property ;
+    rdfs:domain sdl:VerificationAttestation ;
+    rdfs:range xsd:string ;
+    rdfs:comment "Detailed output, error messages, statistics." .
+
+
+# -----------------------------------------------------------------------------
+# 10. Dataset Relationships
+# -----------------------------------------------------------------------------
+#
+# Beyond aggregation: general relationships between datasets.
+# -----------------------------------------------------------------------------
+
+sdl:DatasetRelationship a rdfs:Class .
+
+sdl:Companion a rdfs:Class ;
+    rdfs:subClassOf sdl:DatasetRelationship ;
+    rdfs:comment """Datasets that are co-partitioned and jointly maintained.
+        E.g. daily broadcasts and their corresponding daily index.""" .
+
+sdl:companionOf a rdf:Property ;
+    rdfs:domain sdl:Dataset ;
+    rdfs:range sdl:Dataset .
+
+sdl:sharedPartitionScheme a rdf:Property ;
+    rdfs:domain sdl:DatasetRelationship ;
+    rdfs:range sdl:PartitionScheme ;
+    rdfs:comment """The partition scheme shared between companion datasets,
+        ensuring 1:1 alignment of files.""" .

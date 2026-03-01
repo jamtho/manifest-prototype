@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "sdl-toolkit"
+version = "0.1.0"
+description = "Structural Data Language — describe, validate, and integrate data with formal semantics"
+requires-python = ">=3.11"
+dependencies = [
+    "rdflib>=7.0",
+    "duckdb>=1.0",
+    "pyarrow>=15.0",
+    "click>=8.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "h3"]
+
+[project.scripts]
+sdl = "sdl.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["sdl*"]
+
+[tool.setuptools.package-data]
+sdl = ["py.typed"]
