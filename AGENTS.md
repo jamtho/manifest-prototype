@@ -32,6 +32,7 @@
 
 - Vocabulary definitions go in `vocabularies/`
 - Domain descriptions go in `descriptions/`
+- Generated markdown docs live in `descriptions/generated/` — regenerate when TTL changes: `sdl generate-docs --vocab vocabularies/ --desc descriptions/ --out descriptions/generated/`
 - Documentation goes in `docs/`
 - The `sdl/` package contains the Python toolkit (graph loader, validators, CLI)
 - Namespace prefixes used in `.ttl` files must be registered in `sdl/graph.py` (module constant, `_str()`, `__init__()` bind, `_resolve_uri()` ns_map)

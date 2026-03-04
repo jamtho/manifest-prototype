@@ -59,6 +59,9 @@ sdl validate path/to/broadcasts/ais-2025-01-01.parquet \
 # Inspect a Parquet file's raw metadata
 sdl info path/to/data.parquet
 
+# Generate markdown documentation from descriptions
+sdl generate-docs --vocab vocabularies/ --desc descriptions/ --out descriptions/generated/
+
 # Output attestations as Turtle (for writing back to the graph)
 sdl validate path/to/file.parquet \
     --dataset ais:DailyBroadcasts \
@@ -142,7 +145,10 @@ sdl-toolkit/
 │   └── sdl_core.ttl
 ├── descriptions/             # Domain-specific descriptions
 │   ├── ais_description.ttl           # NOAA AIS maritime data
-│   └── polymarket_description.ttl    # Polymarket prediction-market data
+│   ├── polymarket_description.ttl    # Polymarket prediction-market data
+│   └── generated/                    # Markdown tables (regenerate with sdl generate-docs)
+│       ├── ais_description.md
+│       └── polymarket_description.md
 ├── docs/
 │   └── vocabulary-evolution.md       # How the Polymarket domain drove vocabulary extensions
 ├── pyproject.toml

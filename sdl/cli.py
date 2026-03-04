@@ -5,6 +5,7 @@ Usage:
     sdl validate <file.parquet> --dataset ais:DailyBroadcasts --vocab vocab/ --desc desc/
     sdl validate <broadcast.parquet> --dataset ais:DailyBroadcasts --companion <index.parquet> --companion-dataset ais:DailyIndex
     sdl describe <vocab_dir> <desc_dir>
+    sdl generate-docs --vocab vocabularies/ --desc descriptions/ --out descriptions/generated/
     sdl info <file.parquet>
 """
 
@@ -13,9 +14,10 @@ from __future__ import annotations
 from pathlib import Path
 
 import click
+from rdflib import Graph, Namespace, URIRef
 
 from sdl.engine import ValidationEngine
-from sdl.graph import SDLGraph
+from sdl.graph import SDLGraph, SDL, RDF, RDFS, _str, _label_or_str, _lit_str
 from sdl.model import ComputationalProfile, ValidationResult
 
 
@@ -260,6 +262,274 @@ def info(file_path: str) -> None:
                 f"compressed={col.total_compressed_size:>10,} "
                 f"uncompressed={col.total_uncompressed_size:>10,}"
             )
+
+
+@main.command("generate-docs")
+@click.option(
+    "--vocab", "-v",
+    multiple=True,
+    required=True,
+    help="Path to vocabulary .ttl file or directory",
+)
+@click.option(
+    "--desc",
+    multiple=True,
+    required=True,
+    help="Path to description .ttl file or directory",
+)
+@click.option(
+    "--out", "-o",
+    required=True,
+    type=click.Path(),
+    help="Output directory for generated markdown",
+)
+def generate_docs(vocab: tuple[str, ...], desc: tuple[str, ...], out: str) -> None:
+    """Generate markdown documentation from SDL descriptions."""
+    graph = _load_graph(vocab, desc)
+    out_dir = Path(out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Collect all .ttl description files
+    desc_files: list[Path] = []
+    for p in desc:
+        path = Path(p)
+        if path.is_dir():
+            desc_files.extend(sorted(path.glob("*.ttl")))
+        else:
+            desc_files.append(path)
+
+    # For each description file, find which datasets it declares
+    for desc_file in desc_files:
+        tmp = Graph()
+        tmp.parse(str(desc_file), format="turtle")
+        ds_uris = [
+            _str(s) for s in tmp.subjects(RDF.type, SDL.Dataset)
+        ]
+        if not ds_uris:
+            continue
+
+        md_path = out_dir / desc_file.with_suffix(".md").name
+        md = _render_description(graph, ds_uris, desc_file.name)
+        md_path.write_text(md, encoding="utf-8")
+        click.echo(f"  wrote {md_path}")
+
+
+def _render_description(
+    graph: SDLGraph, ds_uris: list[str], source_filename: str,
+) -> str:
+    """Render markdown for all datasets from one description file."""
+    g = graph.g
+    lines: list[str] = []
+
+    # Title — preserve all-caps acronyms like AIS
+    stem = source_filename.replace("_description.ttl", "")
+    title = stem.upper() if stem == stem.lower() and len(stem) <= 4 else stem.replace("_", " ").title()
+    lines.append(f"# {title} Dataset Description")
+    lines.append("")
+    lines.append(f"*Generated from `{source_filename}` — do not edit.*")
+    lines.append("")
+
+    # Dataset summary table
+    lines.append("## Datasets")
+    lines.append("")
+    lines.append("| Dataset | Row Semantics | Schema | Partitioning | Format |")
+    lines.append("|---------|---------------|--------|--------------|--------|")
+    for uri in ds_uris:
+        ds = graph.get_dataset(uri)
+        subj = graph._resolve_uri(uri)
+        row_sem = _label_or_str(g, g.value(subj, SDL.rowSemantics))
+        stability = _label_or_str(g, g.value(subj, SDL.schemaStability))
+        part = ds.partition_granularity or "—"
+        lines.append(
+            f"| {ds.label} | {row_sem or '—'} | {stability or '—'} "
+            f"| {part} | {ds.file_format} |"
+        )
+    lines.append("")
+
+    # Per-dataset sections
+    for uri in ds_uris:
+        lines.extend(_render_dataset_section(graph, uri))
+
+    # Cross-dataset relationships
+    cross = _render_cross_dataset(graph, ds_uris)
+    if cross:
+        lines.append("## Cross-Dataset Relationships")
+        lines.append("")
+        lines.extend(cross)
+
+    return "\n".join(lines) + "\n"
+
+
+def _render_dataset_section(graph: SDLGraph, uri: str) -> list[str]:
+    """Render one dataset's full documentation section."""
+    g = graph.g
+    ds = graph.get_dataset(uri)
+    subj = graph._resolve_uri(uri)
+    lines: list[str] = []
+
+    lines.append("---")
+    lines.append("")
+    lines.append(f"## {ds.label}")
+    lines.append("")
+    lines.append(f"**URI:** `{uri}`")
+
+    row_sem = _label_or_str(g, g.value(subj, SDL.rowSemantics))
+    if row_sem:
+        lines.append(f"  \n**Row semantics:** {row_sem}")
+    stability = _label_or_str(g, g.value(subj, SDL.schemaStability))
+    if stability:
+        lines.append(f"  \n**Schema:** {stability}")
+    if ds.partition_path_template:
+        lines.append(f"  \n**Path template:** `{ds.partition_path_template}`")
+
+    entity_key = g.value(subj, SDL.entityKey)
+    if entity_key:
+        ek_name = _lit_str(g.value(entity_key, SDL.columnName))
+        lines.append(f"  \n**Entity key:** `{ek_name}`")
+
+    lines.append("")
+
+    # Columns table
+    lines.append("### Columns")
+    lines.append("")
+    lines.append("| Name | Physical Type | Semantic Type | Nullable |")
+    lines.append("|------|---------------|---------------|----------|")
+    for col in sorted(ds.columns, key=lambda c: c.name):
+        sem = col.semantic_type or ""
+        nullable = "yes" if col.nullable else "no"
+        lines.append(f"| `{col.name}` | {col.physical_type} | {sem} | {nullable} |")
+    lines.append("")
+
+    # Ordering
+    if ds.ordering_keys:
+        keys = sorted(ds.ordering_keys, key=lambda k: k.precedence)
+        lines.append("### Ordering")
+        lines.append("")
+        lines.append("| # | Column | Direction | Semantic |")
+        lines.append("|---|--------|-----------|----------|")
+        for k in keys:
+            lines.append(
+                f"| {k.precedence} | `{k.column_name}` | {k.direction} | {k.semantic} |"
+            )
+        lines.append("")
+
+    # Derivations
+    derivations = graph.get_derivations(uri)
+    if derivations:
+        lines.append("### Derivations")
+        lines.append("")
+        lines.append("| Derived Column | Source Columns | Function | Properties |")
+        lines.append("|----------------|----------------|----------|------------|")
+        for d in derivations:
+            src = ", ".join(f"`{s}`" for s in d.source_columns)
+            props = ", ".join(d.properties) if d.properties else ""
+            lines.append(f"| `{d.derived_column}` | {src} | {d.function_uri} | {props} |")
+        lines.append("")
+
+    # Known deficiencies
+    deficiencies = graph.get_known_deficiencies(uri)
+    if deficiencies:
+        lines.append("### Known Deficiencies")
+        lines.append("")
+        lines.append("| Severity | Description |")
+        lines.append("|----------|-------------|")
+        for d in deficiencies:
+            desc_text = " ".join(d["description"].split())
+            lines.append(f"| {d['severity']} | {desc_text} |")
+        lines.append("")
+
+    return lines
+
+
+def _render_cross_dataset(graph: SDLGraph, ds_uris: list[str]) -> list[str]:
+    """Render cross-dataset relationships: aggregations, foreign keys, same-entity."""
+    g = graph.g
+    lines: list[str] = []
+
+    # Aggregations
+    for uri in ds_uris:
+        aggs = graph.get_aggregations(uri)
+        for agg in aggs:
+            lines.append("### Aggregation")
+            lines.append("")
+            lines.append(
+                f"**{agg.source_dataset}** → **{agg.target_dataset}** "
+                f"(grouped by `{agg.group_by_column}`)"
+            )
+            lines.append("")
+            lines.append("| Target Column | Source Column(s) | Function |")
+            lines.append("|---------------|------------------|----------|")
+            for ac in agg.aggregated_columns:
+                src = ", ".join(f"`{s}`" for s in ac.source_columns)
+                func = _label_or_str(g, graph._resolve_uri(ac.function_uri))
+                lines.append(f"| `{ac.target_column}` | {src} | {func} |")
+            lines.append("")
+
+    # Foreign keys
+    fk_lines: list[str] = []
+    ds_uris_resolved = {graph._resolve_uri(u) for u in ds_uris}
+    for fk_node in g.subjects(RDF.type, SDL.ForeignKey):
+        from_col = g.value(fk_node, SDL.foreignKeyFrom)
+        to_col = g.value(fk_node, SDL.foreignKeyTo)
+        if from_col is None or to_col is None:
+            continue
+        # Check if either column belongs to a dataset in our set
+        from_ds = _find_dataset_for_column(g, from_col, ds_uris_resolved)
+        to_ds = _find_dataset_for_column(g, to_col, ds_uris_resolved)
+        if from_ds is None and to_ds is None:
+            continue
+        label = _lit_str(g.value(fk_node, RDFS.label)) or _str(fk_node)
+        from_name = _lit_str(g.value(from_col, SDL.columnName))
+        to_name = _lit_str(g.value(to_col, SDL.columnName))
+        integrity = _label_or_str(g, g.value(fk_node, SDL.referentialIntegrity))
+        fk_lines.append(
+            f"| {label} | `{from_name}` | `{to_name}` | {integrity} |"
+        )
+
+    if fk_lines:
+        lines.append("### Foreign Keys")
+        lines.append("")
+        lines.append("| Relationship | From | To | Integrity |")
+        lines.append("|-------------|------|-----|-----------|")
+        lines.extend(fk_lines)
+        lines.append("")
+
+    # Same entity
+    se_lines: list[str] = []
+    for se_node in g.subjects(RDF.type, SDL.SameEntity):
+        cols = list(g.objects(se_node, SDL.identifyingColumn))
+        # Check if any identifying column belongs to a dataset in our set
+        relevant = any(
+            _find_dataset_for_column(g, col, ds_uris_resolved) is not None
+            for col in cols
+        )
+        if not relevant:
+            continue
+        label = _lit_str(g.value(se_node, RDFS.label)) or _str(se_node)
+        col_names = ", ".join(
+            f"`{_lit_str(g.value(c, SDL.columnName))}`" for c in cols
+        )
+        se_lines.append(f"| {label} | {col_names} |")
+
+    if se_lines:
+        lines.append("### Same Entity")
+        lines.append("")
+        lines.append("| Identity | Columns |")
+        lines.append("|----------|---------|")
+        lines.extend(se_lines)
+        lines.append("")
+
+    return lines
+
+
+def _find_dataset_for_column(
+    g: Graph, col_node: URIRef, ds_set: set[URIRef],
+) -> URIRef | None:
+    """Find which dataset a column belongs to, if any in ds_set."""
+    for ds in g.subjects(SDL.hasColumn, col_node):
+        if ds in ds_set:
+            return ds
+    return None
 
 
 if __name__ == "__main__":
