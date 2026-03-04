@@ -641,3 +641,206 @@ sdl:sharedPartitionScheme a rdf:Property ;
     rdfs:range sdl:PartitionScheme ;
     rdfs:comment """The partition scheme shared between companion datasets,
         ensuring 1:1 alignment of files.""" .
+
+
+# -----------------------------------------------------------------------------
+# 11. Allowed Values (Categorical / Enum Constraints)
+# -----------------------------------------------------------------------------
+#
+# Extends value constraints beyond numeric ranges to support enumerated
+# string values. Motivated by prediction-market data where columns like
+# trade side are constrained to {"BUY", "SELL"}.
+# -----------------------------------------------------------------------------
+
+sdl:AllowedValues a rdfs:Class ;
+    rdfs:comment """A set of permitted values for a semantic type or column.
+        Analogous to an enum constraint. Each allowed value is declared
+        via sdl:allowedValue.""" .
+
+sdl:hasAllowedValues a rdf:Property ;
+    rdfs:domain sdl:SemanticType ;
+    rdfs:range sdl:AllowedValues ;
+    rdfs:comment "Links a semantic type to its set of allowed values." .
+
+sdl:allowedValue a rdf:Property ;
+    rdfs:domain sdl:AllowedValues ;
+    rdfs:range xsd:string ;
+    rdfs:comment "One permitted value in an AllowedValues set." .
+
+
+# -----------------------------------------------------------------------------
+# 12. Snapshot / Entity Key Semantics
+# -----------------------------------------------------------------------------
+#
+# Declares that a dataset represents temporal snapshots of entities
+# identified by a key column. Each row is a point-in-time observation
+# of an entity, not an independent event.
+# -----------------------------------------------------------------------------
+
+sdl:entityKey a rdf:Property ;
+    rdfs:domain sdl:Dataset ;
+    rdfs:range sdl:Column ;
+    rdfs:comment """Declares that this dataset contains temporal snapshots of
+        entities identified by this column. The same entity key value
+        appears in multiple rows across time. Consumers should expect
+        duplicates on this column and use a timestamp column to select
+        the desired point-in-time state.""" .
+
+
+# -----------------------------------------------------------------------------
+# 13. Embedded Structure (Structured Data in String Columns)
+# -----------------------------------------------------------------------------
+#
+# Describes the internal structure of columns whose physical type is
+# Varchar but whose content is structured (e.g. JSON arrays, nested
+# objects encoded as strings).
+# -----------------------------------------------------------------------------
+
+sdl:embeddedStructure a rdf:Property ;
+    rdfs:domain sdl:Column ;
+    rdfs:range sdl:EmbeddedStructure ;
+    rdfs:comment """Declares that this column contains structured data encoded
+        as a string. The EmbeddedStructure describes the internal format
+        and schema.""" .
+
+sdl:EmbeddedStructure a rdfs:Class ;
+    rdfs:comment """Description of structured data embedded within a string
+        column. Captures the encoding format and inner type.""" .
+
+sdl:embeddedFormat a rdf:Property ;
+    rdfs:domain sdl:EmbeddedStructure ;
+    rdfs:range xsd:string ;
+    rdfs:comment "Encoding format of the embedded data, e.g. 'json', 'csv'." .
+
+sdl:embeddedElementType a rdf:Property ;
+    rdfs:domain sdl:EmbeddedStructure ;
+    rdfs:range xsd:string ;
+    rdfs:comment """Description of the inner element type, e.g.
+        'array<string>', 'array<{price: float, size: float}>'.""" .
+
+
+# -----------------------------------------------------------------------------
+# 14. Composite Partition Scheme
+# -----------------------------------------------------------------------------
+#
+# Extends partitioning to support multiple partition dimensions
+# (e.g. dt=YYYY-MM-DD/hour=HH).
+# -----------------------------------------------------------------------------
+
+sdl:CompositePartitionScheme rdfs:subClassOf sdl:PartitionScheme ;
+    rdfs:comment """A partition scheme with multiple partition dimensions.
+        Each level is declared as a PartitionLevel with its own column
+        and granularity.""" .
+
+sdl:hasPartitionLevel a rdf:Property ;
+    rdfs:domain sdl:CompositePartitionScheme ;
+    rdfs:range sdl:PartitionLevel ;
+    rdfs:comment "Links a composite scheme to one of its partition levels." .
+
+sdl:PartitionLevel a rdfs:Class ;
+    rdfs:comment "A single dimension in a composite partition scheme." .
+
+sdl:levelPrecedence a rdf:Property ;
+    rdfs:domain sdl:PartitionLevel ;
+    rdfs:range xsd:integer ;
+    rdfs:comment "Ordering of partition levels: 1 = outermost, 2 = next, etc." .
+
+sdl:levelColumn a rdf:Property ;
+    rdfs:domain sdl:PartitionLevel ;
+    rdfs:range xsd:string ;
+    rdfs:comment """Name of the partition key in the directory path. May not
+        correspond to a data column (e.g. Hive partitions extracted from
+        filenames, not embedded in data).""" .
+
+sdl:levelGranularity a rdf:Property ;
+    rdfs:domain sdl:PartitionLevel ;
+    rdfs:range xsd:string ;
+    rdfs:comment "Granularity of this partition level, e.g. 'daily', 'hourly'." .
+
+
+# -----------------------------------------------------------------------------
+# 15. Foreign Key / Referential Relationships
+# -----------------------------------------------------------------------------
+#
+# Declares that a column in one dataset references an entity identified
+# by a column in another dataset. Unlike companionOf, this does not
+# imply co-partitioning.
+# -----------------------------------------------------------------------------
+
+sdl:ForeignKey a rdfs:Class ;
+    rdfs:comment """A referential relationship between a column in one dataset
+        and a column in another dataset, declaring that values in the
+        source column reference entities identified by the target column.
+        Does not imply co-partitioning or structural alignment.""" .
+
+sdl:foreignKeyFrom a rdf:Property ;
+    rdfs:domain sdl:ForeignKey ;
+    rdfs:range sdl:Column ;
+    rdfs:comment "The referencing column (source side of the FK)." .
+
+sdl:foreignKeyTo a rdf:Property ;
+    rdfs:domain sdl:ForeignKey ;
+    rdfs:range sdl:Column ;
+    rdfs:comment "The referenced column (target side of the FK)." .
+
+sdl:referentialIntegrity a rdf:Property ;
+    rdfs:domain sdl:ForeignKey ;
+    rdfs:range xsd:string ;
+    rdfs:comment """Expected referential integrity level:
+        'strict' = every FK value must exist in target,
+        'eventual' = may temporarily be missing,
+        'partial' = some values may never resolve.""" .
+
+
+# -----------------------------------------------------------------------------
+# 16. Schema Stability
+# -----------------------------------------------------------------------------
+#
+# Declares how stable a dataset's schema is expected to be.
+# Motivated by data stores where schemas are inferred from dynamic
+# API responses rather than declared upfront.
+# -----------------------------------------------------------------------------
+
+sdl:schemaStability a rdf:Property ;
+    rdfs:domain sdl:Dataset ;
+    rdfs:range sdl:SchemaStabilityLevel ;
+    rdfs:comment """How stable the dataset's column schema is. Affects whether
+        consumers can rely on declared columns being present and having
+        the declared types across all files.""" .
+
+sdl:SchemaStabilityLevel a rdfs:Class .
+
+sdl:FixedSchema a sdl:SchemaStabilityLevel ;
+    rdfs:comment """Schema is declared and enforced. All files have the same
+        columns with the same types. Missing columns are an error.""" .
+
+sdl:InferredSchema a sdl:SchemaStabilityLevel ;
+    rdfs:comment """Schema is inferred from data (e.g. by a data processing
+        framework like Polars or Spark). Columns and types may vary
+        between files depending on the data content.""" .
+
+sdl:VariableSchema a sdl:SchemaStabilityLevel ;
+    rdfs:comment """Schema is expected to change over time as the upstream
+        source evolves. Columns may appear, disappear, or change type.""" .
+
+
+# -----------------------------------------------------------------------------
+# 17. Cross-Dataset Entity Identity
+# -----------------------------------------------------------------------------
+#
+# Declares that columns across different datasets refer to the same
+# logical entity. Different from companionOf (which implies co-partitioning)
+# and ForeignKey (which implies a directional reference).
+# -----------------------------------------------------------------------------
+
+sdl:SameEntity a rdfs:Class ;
+    rdfs:comment """A declaration that multiple columns across different
+        datasets identify the same logical entity. Values in these columns
+        can be joined to link records across datasets.""" .
+
+sdl:identifyingColumn a rdf:Property ;
+    rdfs:domain sdl:SameEntity ;
+    rdfs:range sdl:Column ;
+    rdfs:comment """A column that participates in this entity identity
+        relationship. Multiple columns from different datasets can be
+        linked via a single SameEntity declaration.""" .

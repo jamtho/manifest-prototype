@@ -21,6 +21,7 @@ from sdl.model import (
 # Namespace declarations matching the Turtle files
 SDL = Namespace("http://example.org/sdl#")
 AIS = Namespace("http://example.org/ais#")
+PM = Namespace("http://example.org/polymarket#")
 RDF = Namespace("http://www.w3.org/1999/02/22-rdf-syntax-ns#")
 RDFS = Namespace("http://www.w3.org/2000/01/rdf-schema#")
 XSD = Namespace("http://www.w3.org/2001/XMLSchema#")
@@ -32,6 +33,7 @@ def _str(node: Node | None) -> str:
         return ""
     s = str(node)
     for prefix, ns in [("sdl:", str(SDL)), ("ais:", str(AIS)),
+                        ("pm:", str(PM)),
                         ("rdfs:", str(RDFS)), ("xsd:", str(XSD))]:
         if s.startswith(ns):
             return prefix + s[len(ns):]
@@ -77,6 +79,7 @@ class SDLGraph:
         self.g = Graph()
         self.g.bind("sdl", SDL)
         self.g.bind("ais", AIS)
+        self.g.bind("pm", PM)
         self.g.bind("rdfs", RDFS)
         self.g.bind("xsd", XSD)
 
@@ -339,6 +342,7 @@ class SDLGraph:
         ns_map: dict[str, Namespace] = {
             "sdl": SDL,
             "ais": AIS,
+            "pm": PM,
             "rdfs": RDFS,
             "xsd": XSD,
         }
