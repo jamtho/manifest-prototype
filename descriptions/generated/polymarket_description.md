@@ -340,3 +340,28 @@
 | Condition ID identifies the same market across datasets | `conditionId`, `conditionId`, `condition_id`, `market` |
 | CLOB token ID identifies the same token across datasets | `token_id`, `asset_id`, `asset`, `token` |
 
+---
+
+## Notes for AI Agents
+
+This section explains SDL concepts used in the tables above, to help you write correct queries against this data.
+
+**Row semantics** determine how to interpret rows:
+
+- **Event rows** (`sdl:EventRow`) — each row is an independent event or observation. No deduplication needed.
+- **Snapshot rows** (`sdl:SnapshotRow`) — each row is a point-in-time observation of a recurring entity. The same entity appears multiple times. To get the latest state, deduplicate by entity key ordered by `_fetched_at` descending.
+
+**Entity key** — the column that identifies which entity a snapshot row describes. Multiple rows with the same entity key are repeated observations over time, not distinct entities. Use `ROW_NUMBER() OVER (PARTITION BY {entity_key} ORDER BY _fetched_at DESC)` to select the most recent observation per entity within a file.
+
+**Schema stability** affects query robustness:
+
+- **Inferred** (`sdl:InferredSchema`) — schema is inferred from data and may vary between files. Use `TRY_CAST` for type safety, handle potentially missing columns, and use `UNION BY NAME` when combining files from different time periods.
+
+**Foreign keys** — the From and To columns are joinable across datasets, even when column names differ. Check the Integrity column: `sdl:PartialIntegrity` means some values may not resolve in the target (use LEFT JOIN rather than INNER JOIN if you need all rows).
+
+**Same entity** — these columns across different datasets refer to the same real-world entity and are joinable. Unlike foreign keys, same-entity is symmetric — neither side is the "reference" table.
+
+**Known deficiencies** — documented data quality issues that may affect query correctness. Read these before writing queries that involve aggregation, deduplication, or cross-file joins.
+
+**Notation** — `sdl:` prefixed terms are SDL vocabulary concepts. Domain-specific prefixes (e.g. `ais:`, `pm:`) identify semantic types and domain entities. Physical types like `sdl:Varchar`, `sdl:Double`, `sdl:Integer` map directly to DuckDB/Parquet types.
+

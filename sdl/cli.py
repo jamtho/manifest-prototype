@@ -357,6 +357,9 @@ def _render_description(
         lines.append("")
         lines.extend(cross)
 
+    # Agent notes — adaptive to what's in this description
+    lines.extend(_render_agent_notes(graph, ds_uris))
+
     return "\n".join(lines) + "\n"
 
 
@@ -518,6 +521,178 @@ def _render_cross_dataset(graph: SDLGraph, ds_uris: list[str]) -> list[str]:
         lines.append("|----------|---------|")
         lines.extend(se_lines)
         lines.append("")
+
+    return lines
+
+
+def _render_agent_notes(graph: SDLGraph, ds_uris: list[str]) -> list[str]:
+    """Render contextual notes for AI agents, adaptive to concepts present."""
+    g = graph.g
+    lines: list[str] = []
+
+    # Detect which concepts are present
+    row_sems: set[str] = set()
+    stabilities: set[str] = set()
+    has_entity_keys = False
+    has_deficiencies = False
+    has_ordering = False
+    for uri in ds_uris:
+        subj = graph._resolve_uri(uri)
+        rs = _str(g.value(subj, SDL.rowSemantics))
+        if rs:
+            row_sems.add(rs)
+        st = _str(g.value(subj, SDL.schemaStability))
+        if st:
+            stabilities.add(st)
+        if g.value(subj, SDL.entityKey):
+            has_entity_keys = True
+        ds = graph.get_dataset(uri)
+        if ds.ordering_keys:
+            has_ordering = True
+        if graph.get_known_deficiencies(uri):
+            has_deficiencies = True
+
+    ds_uris_resolved = {graph._resolve_uri(u) for u in ds_uris}
+    has_fks = any(
+        _find_dataset_for_column(g, g.value(fk, SDL.foreignKeyFrom), ds_uris_resolved) is not None
+        or _find_dataset_for_column(g, g.value(fk, SDL.foreignKeyTo), ds_uris_resolved) is not None
+        for fk in g.subjects(RDF.type, SDL.ForeignKey)
+        if g.value(fk, SDL.foreignKeyFrom) is not None
+    )
+    has_same_entity = any(
+        any(
+            _find_dataset_for_column(g, col, ds_uris_resolved) is not None
+            for col in g.objects(se, SDL.identifyingColumn)
+        )
+        for se in g.subjects(RDF.type, SDL.SameEntity)
+    )
+    has_aggregations = any(
+        graph.get_aggregations(uri) for uri in ds_uris
+    )
+
+    lines.append("---")
+    lines.append("")
+    lines.append("## Notes for AI Agents")
+    lines.append("")
+    lines.append(
+        "This section explains SDL concepts used in the tables above, "
+        "to help you write correct queries against this data."
+    )
+    lines.append("")
+
+    # Row semantics
+    if row_sems:
+        lines.append("**Row semantics** determine how to interpret rows:")
+        lines.append("")
+        if "sdl:EventRow" in row_sems:
+            lines.append(
+                "- **Event rows** (`sdl:EventRow`) — each row is an independent "
+                "event or observation. No deduplication needed."
+            )
+        if "sdl:SnapshotRow" in row_sems:
+            lines.append(
+                "- **Snapshot rows** (`sdl:SnapshotRow`) — each row is a "
+                "point-in-time observation of a recurring entity. The same entity "
+                "appears multiple times. To get the latest state, deduplicate by "
+                "entity key ordered by `_fetched_at` descending."
+            )
+        if "sdl:AggregateRow" in row_sems:
+            lines.append(
+                "- **Aggregate rows** (`sdl:AggregateRow`) — each row summarises "
+                "a group of source rows. Check the Aggregation table for how "
+                "columns relate to the source dataset."
+            )
+        lines.append("")
+
+    # Entity keys
+    if has_entity_keys:
+        lines.append(
+            "**Entity key** — the column that identifies which entity a snapshot "
+            "row describes. Multiple rows with the same entity key are repeated "
+            "observations over time, not distinct entities. Use "
+            "`ROW_NUMBER() OVER (PARTITION BY {entity_key} ORDER BY _fetched_at DESC)` "
+            "to select the most recent observation per entity within a file."
+        )
+        lines.append("")
+
+    # Schema stability
+    if stabilities:
+        lines.append("**Schema stability** affects query robustness:")
+        lines.append("")
+        if "sdl:FixedSchema" in stabilities:
+            lines.append(
+                "- **Fixed** (`sdl:FixedSchema`) — all files have identical "
+                "columns and types. Query without defensive casting."
+            )
+        if "sdl:InferredSchema" in stabilities:
+            lines.append(
+                "- **Inferred** (`sdl:InferredSchema`) — schema is inferred from "
+                "data and may vary between files. Use `TRY_CAST` for type safety, "
+                "handle potentially missing columns, and use `UNION BY NAME` when "
+                "combining files from different time periods."
+            )
+        if "sdl:VariableSchema" in stabilities:
+            lines.append(
+                "- **Variable** (`sdl:VariableSchema`) — schema changes over "
+                "time as the upstream source evolves. Query defensively."
+            )
+        lines.append("")
+
+    # Ordering
+    if has_ordering:
+        lines.append(
+            "**Row ordering** — files with declared ordering are physically sorted "
+            "by the listed keys. DuckDB can exploit this for merge joins and "
+            "ordered aggregations. The semantic column distinguishes keys that "
+            "carry meaning (e.g. a time series) from keys used purely for "
+            "index clustering."
+        )
+        lines.append("")
+
+    # Cross-dataset: foreign keys, same entity, aggregations
+    if has_fks:
+        lines.append(
+            "**Foreign keys** — the From and To columns are joinable across "
+            "datasets, even when column names differ. Check the Integrity column: "
+            "`sdl:PartialIntegrity` means some values may not resolve in the "
+            "target (use LEFT JOIN rather than INNER JOIN if you need all rows)."
+        )
+        lines.append("")
+
+    if has_same_entity:
+        lines.append(
+            "**Same entity** — these columns across different datasets refer to "
+            "the same real-world entity and are joinable. Unlike foreign keys, "
+            "same-entity is symmetric — neither side is the \"reference\" table."
+        )
+        lines.append("")
+
+    if has_aggregations:
+        lines.append(
+            "**Aggregations** — the target dataset's columns are computed from "
+            "the source dataset. Don't recompute what already exists in the "
+            "aggregate table. The Function column shows exactly how each target "
+            "column is derived."
+        )
+        lines.append("")
+
+    # Deficiencies
+    if has_deficiencies:
+        lines.append(
+            "**Known deficiencies** — documented data quality issues that may "
+            "affect query correctness. Read these before writing queries that "
+            "involve aggregation, deduplication, or cross-file joins."
+        )
+        lines.append("")
+
+    # Notation
+    lines.append(
+        "**Notation** — `sdl:` prefixed terms are SDL vocabulary concepts. "
+        "Domain-specific prefixes (e.g. `ais:`, `pm:`) identify semantic types "
+        "and domain entities. Physical types like `sdl:Varchar`, `sdl:Double`, "
+        "`sdl:Integer` map directly to DuckDB/Parquet types."
+    )
+    lines.append("")
 
     return lines
 

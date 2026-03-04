@@ -150,3 +150,26 @@
 | `distance_m` | `latitude`, `longitude` | Haversine distance from first to last position |
 | `max_inter_msg_speed_ms` | `latitude`, `longitude`, `timestamp` | Maximum implied speed between consecutive messages |
 
+---
+
+## Notes for AI Agents
+
+This section explains SDL concepts used in the tables above, to help you write correct queries against this data.
+
+**Row semantics** determine how to interpret rows:
+
+- **Event rows** (`sdl:EventRow`) — each row is an independent event or observation. No deduplication needed.
+- **Aggregate rows** (`sdl:AggregateRow`) — each row summarises a group of source rows. Check the Aggregation table for how columns relate to the source dataset.
+
+**Schema stability** affects query robustness:
+
+- **Fixed** (`sdl:FixedSchema`) — all files have identical columns and types. Query without defensive casting.
+
+**Row ordering** — files with declared ordering are physically sorted by the listed keys. DuckDB can exploit this for merge joins and ordered aggregations. The semantic column distinguishes keys that carry meaning (e.g. a time series) from keys used purely for index clustering.
+
+**Aggregations** — the target dataset's columns are computed from the source dataset. Don't recompute what already exists in the aggregate table. The Function column shows exactly how each target column is derived.
+
+**Known deficiencies** — documented data quality issues that may affect query correctness. Read these before writing queries that involve aggregation, deduplication, or cross-file joins.
+
+**Notation** — `sdl:` prefixed terms are SDL vocabulary concepts. Domain-specific prefixes (e.g. `ais:`, `pm:`) identify semantic types and domain entities. Physical types like `sdl:Varchar`, `sdl:Double`, `sdl:Integer` map directly to DuckDB/Parquet types.
+
