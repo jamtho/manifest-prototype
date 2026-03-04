@@ -8,17 +8,15 @@ SDL sits between a schema and a full ontology. It captures structural knowledge 
 
 Data formats like Parquet tell you column names and physical types. SDL lets you express everything else a machine (or an LLM) would need to know to work with your data correctly:
 
-- That `mmsi` is a Maritime Mobile Service Identity and **must** be stored as `INTEGER`, not `VARCHAR` (a real bug this system would have caught instantly, from Parquet metadata alone, with zero data scan)
-- That `(latitude, longitude)` together form a WGS84 coordinate pair
-- That `geometry` is deterministically derived from `latitude` and `longitude`, so it can be recomputed rather than stored
-- That within each daily Parquet file, rows are sorted by MMSI then by timestamp — and that the MMSI ordering is for index efficiency while the timestamp ordering carries semantic meaning (it's a vessel trajectory)
-- That the index file's `sog_mean` column is the arithmetic mean of the broadcast file's `sog` column, grouped by MMSI
-- That the data has known gaps from NOAA's undocumented downsampling, so trajectory-based distance calculations will underestimate
-- That a prediction-market `side` column must be one of `{"BUY", "SELL"}` — not just a string
-- That a `bids` column is physically Varchar but contains a JSON array of `{price, size}` objects
-- That `conditionId` in a trades dataset and `condition_id` in a holders dataset refer to the same logical entity
+- That `mmsi` **must** be stored as `INTEGER`, not `VARCHAR` — and that a prediction-market `side` column must be one of `{"BUY", "SELL"}`, not just a string (type and enum constraints caught from metadata alone)
+- That `conditionId` in a trades dataset and `condition_id` in a holders dataset refer to the same logical entity, even though column names differ
+- That `geometry` is deterministically derived from `(latitude, longitude)`, so it can be recomputed rather than stored — while a `bids` column is physically Varchar but contains a JSON array of `{price, size}` objects that could be parsed into structured columns
+- That AIS broadcast files are sorted by MMSI then timestamp — where MMSI ordering is for index efficiency but timestamp ordering carries semantic meaning (it's a vessel trajectory) — while Polymarket snapshots have no meaningful ordering at all
+- That each Polymarket snapshot row is a point-in-time observation of a recurring entity (keyed by `condition_id`), while each AIS row is an independent event
+- That the index file's `sog_mean` is the arithmetic mean of the broadcast file's `sog`, grouped by MMSI — a cross-dataset aggregation dependency the system can verify
+- That AIS data has known gaps from NOAA's undocumented downsampling, and Polymarket schemas are inferred by Polars from JSON so columns may vary between files
 
-All of this is expressed as RDF in Turtle files, queryable, composable, and machine-readable.
+All of this is expressed as RDF in Turtle files, queryable, composable, and machine-readable. See the [generated dataset tables](descriptions/generated/) for a readable view of what's described.
 
 ## Design Principles
 
@@ -36,15 +34,24 @@ uv sync  # or: pip install -e .
 # See what the SDL graph describes (no data needed)
 sdl describe --vocab vocabularies/ --desc descriptions/
 
+# Generate browsable markdown tables from the descriptions
+sdl generate-docs --vocab vocabularies/ --desc descriptions/ --out descriptions/generated/
+
 # Instant schema check — catches type mismatches from Parquet metadata alone
 sdl validate path/to/ais-2025-01-01.parquet \
     --dataset ais:DailyBroadcasts \
     --vocab vocabularies/ --desc descriptions/ \
     --max-level schema
 
-# Full validation including value ranges, ordering, and monotonicity
+# Full validation — value ranges, ordering, monotonicity
 sdl validate path/to/ais-2025-01-01.parquet \
     --dataset ais:DailyBroadcasts \
+    --vocab vocabularies/ --desc descriptions/ \
+    --verbose
+
+# Validate a Polymarket snapshot file
+sdl validate path/to/gamma-markets/hour=00.parquet \
+    --dataset pm:MarketSnapshots \
     --vocab vocabularies/ --desc descriptions/ \
     --verbose
 
@@ -58,15 +65,6 @@ sdl validate path/to/broadcasts/ais-2025-01-01.parquet \
 
 # Inspect a Parquet file's raw metadata
 sdl info path/to/data.parquet
-
-# Generate markdown documentation from descriptions
-sdl generate-docs --vocab vocabularies/ --desc descriptions/ --out descriptions/generated/
-
-# Output attestations as Turtle (for writing back to the graph)
-sdl validate path/to/file.parquet \
-    --dataset ais:DailyBroadcasts \
-    --vocab vocabularies/ --desc descriptions/ \
-    --turtle
 ```
 
 ## Python API
@@ -81,35 +79,28 @@ graph.load("vocabularies/sdl_core.ttl")
 graph.load("descriptions/ais_description.ttl")
 graph.load("descriptions/polymarket_description.ttl")
 
-# Inspect what's described
+# Inspect what's described — works across both domains at once
 for ds_uri in graph.list_datasets():
     ds = graph.get_dataset(ds_uri)
     print(f"{ds.label}: {len(ds.columns)} columns")
-    for col in ds.columns:
-        sem = f"  [{col.semantic_type}]" if col.semantic_type else ""
-        print(f"  {col.name:24s} {col.physical_type}{sem}")
 
-# Validate a file
+# Validate a file against its description
 engine = ValidationEngine(graph)
 attestations = engine.validate_file(
-    Path("data/broadcasts/2025/ais-2025-01-01.parquet"),
-    "ais:DailyBroadcasts",
+    Path("data/gamma-markets/hour=00.parquet"),
+    "pm:MarketSnapshots",
     verbose=True,
 )
-
-# Check results
 for a in attestations:
     print(a.summary_line())
-    if not a.passed:
-        print(f"    {a.details}")
 
-# Explore semantic types, derivations, aggregations
+# Explore metadata — semantic types, derivations, cross-dataset links
 st = graph.get_semantic_type("ais:MMSI")
 print(f"MMSI requires: {st.required_physical_type}, range: [{st.min_inclusive}, {st.max_inclusive}]")
 
-derivations = graph.get_derivations("ais:DailyBroadcasts")
-aggregations = graph.get_aggregations("ais:DailyIndex")
-deficiencies = graph.get_known_deficiencies("ais:DailyBroadcasts")
+derivations = graph.get_derivations("pm:MarketSnapshots")   # spread <- bestAsk, bestBid
+aggregations = graph.get_aggregations("ais:DailyIndex")     # broadcasts -> index
+deficiencies = graph.get_known_deficiencies("pm:MarketSnapshots")
 ```
 
 ## Validation Levels
