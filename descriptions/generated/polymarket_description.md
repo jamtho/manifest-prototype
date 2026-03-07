@@ -400,9 +400,9 @@ This section explains Manifest concepts used in the tables above, to help you wr
 **Row semantics** determine how to interpret rows:
 
 - **Event rows** (`mnf:EventRow`) — each row is an independent event or observation. No deduplication needed.
-- **Snapshot rows** (`mnf:SnapshotRow`) — each row is a point-in-time observation of a recurring entity. The same entity appears multiple times. To get the latest state, deduplicate by entity key ordered by `_fetched_at` descending.
+- **Snapshot rows** (`mnf:SnapshotRow`) — each row is a point-in-time observation of a recurring entity. The same entity appears multiple times. To get the latest state, deduplicate by entity key ordered by the snapshot timestamp (`_fetched_at`) descending.
 
-**Entity key** — the column that identifies which entity a snapshot row describes. Multiple rows with the same entity key are repeated observations over time, not distinct entities. Use `ROW_NUMBER() OVER (PARTITION BY {entity_key} ORDER BY _fetched_at DESC)` to select the most recent observation per entity within a file.
+**Entity key** — the column that identifies which entity a snapshot row describes. Multiple rows with the same entity key are repeated observations over time, not distinct entities. Use `ROW_NUMBER() OVER (PARTITION BY {entity_key} ORDER BY {snapshot_timestamp} DESC)` to select the most recent observation per entity.
 
 **Schema stability** affects query robustness:
 

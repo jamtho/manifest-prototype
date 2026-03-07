@@ -651,12 +651,28 @@ def _render_agent_notes(graph: ManifestGraph, ds_uris: list[str]) -> list[str]:
                 "event or observation. No deduplication needed."
             )
         if "mnf:SnapshotRow" in row_sems:
-            lines.append(
-                "- **Snapshot rows** (`mnf:SnapshotRow`) — each row is a "
-                "point-in-time observation of a recurring entity. The same entity "
-                "appears multiple times. To get the latest state, deduplicate by "
-                "entity key ordered by `_fetched_at` descending."
-            )
+            # Find snapshot timestamp columns to give concrete guidance
+            snap_ts_cols: set[str] = set()
+            for uri in ds_uris:
+                subj = graph._resolve_uri(uri)
+                ts_col = g.value(subj, MNF.snapshotTimestamp)
+                if ts_col:
+                    snap_ts_cols.add(_lit_str(g.value(ts_col, MNF.columnName)))
+            if snap_ts_cols:
+                ts_hint = ", ".join(f"`{c}`" for c in sorted(snap_ts_cols))
+                lines.append(
+                    "- **Snapshot rows** (`mnf:SnapshotRow`) — each row is a "
+                    "point-in-time observation of a recurring entity. The same entity "
+                    "appears multiple times. To get the latest state, deduplicate by "
+                    f"entity key ordered by the snapshot timestamp ({ts_hint}) descending."
+                )
+            else:
+                lines.append(
+                    "- **Snapshot rows** (`mnf:SnapshotRow`) — each row is a "
+                    "point-in-time observation of a recurring entity. The same entity "
+                    "appears multiple times across releases. Within a single release, "
+                    "each entity key is unique."
+                )
         if "mnf:AggregateRow" in row_sems:
             lines.append(
                 "- **Aggregate rows** (`mnf:AggregateRow`) — each row summarises "
@@ -667,13 +683,25 @@ def _render_agent_notes(graph: ManifestGraph, ds_uris: list[str]) -> list[str]:
 
     # Entity keys
     if has_entity_keys:
-        lines.append(
-            "**Entity key** — the column that identifies which entity a snapshot "
-            "row describes. Multiple rows with the same entity key are repeated "
-            "observations over time, not distinct entities. Use "
-            "`ROW_NUMBER() OVER (PARTITION BY {entity_key} ORDER BY _fetched_at DESC)` "
-            "to select the most recent observation per entity within a file."
+        # Check if any dataset has a declared snapshot timestamp
+        has_snap_ts = any(
+            g.value(graph._resolve_uri(uri), MNF.snapshotTimestamp) is not None
+            for uri in ds_uris
         )
+        if has_snap_ts:
+            lines.append(
+                "**Entity key** — the column that identifies which entity a snapshot "
+                "row describes. Multiple rows with the same entity key are repeated "
+                "observations over time, not distinct entities. Use "
+                "`ROW_NUMBER() OVER (PARTITION BY {entity_key} ORDER BY {snapshot_timestamp} DESC)` "
+                "to select the most recent observation per entity."
+            )
+        else:
+            lines.append(
+                "**Entity key** — the column that identifies which entity a snapshot "
+                "row describes. Within a single release, each entity key value should "
+                "be unique. Across releases, the same entity appears in each snapshot."
+            )
         lines.append("")
 
     # Schema stability
