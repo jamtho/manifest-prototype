@@ -127,6 +127,7 @@ manifest-toolkit/
 │   ├── engine.py             # Graph-driven validation orchestrator
 │   ├── registry.py           # Extensible validator registry
 │   ├── cli.py                # Click CLI
+│   ├── server.py             # MCP server (FastMCP)
 │   └── validators/           # Built-in validators
 │       ├── schema.py         #   Physical type checks (Parquet metadata only)
 │       ├── values.py         #   Value range checks (DuckDB scan)
@@ -144,6 +145,68 @@ manifest-toolkit/
 │   └── vocabulary-evolution.md       # How the Polymarket domain drove vocabulary extensions
 ├── pyproject.toml
 └── README.md
+```
+
+## MCP Server
+
+Manifest includes an [MCP](https://modelcontextprotocol.io/) server that lets AI agents query your data using the Manifest metadata as context. The server exposes dataset documentation as resources and DuckDB-backed SQL execution as tools.
+
+```bash
+# Metadata-only mode — resources and discovery work, queries return "no data configured"
+mnf serve --vocab vocabularies/ --desc descriptions/
+
+# With data — registers DuckDB views from Parquet files matched via path templates
+mnf serve --vocab vocabularies/ --desc descriptions/ \
+    --data /data/ais/ --data /data/polymarket/
+```
+
+### How it works
+
+On startup the server:
+1. Loads the Manifest graph from vocabulary and description files
+2. Creates an in-memory DuckDB connection
+3. For each dataset with a `partition_path_template`, converts the template to a glob (e.g. `broadcasts/{year}/ais-{date}.parquet` → `broadcasts/*/ais-*.parquet`), checks each `--data` root for matching files, and registers a DuckDB view
+4. Pre-renders markdown documentation for each description file
+
+### Resources
+
+| URI | Description |
+|-----|-------------|
+| `manifest://docs/{domain}` | Full markdown documentation for a domain (e.g. `manifest://docs/ais`, `manifest://docs/polymarket`). Includes schemas, semantic types, ordering, relationships, deficiencies, and agent notes. |
+
+### Tools
+
+| Tool | Parameters | Description |
+|------|------------|-------------|
+| `list_datasets` | — | Returns available datasets with view names, column counts, row counts, and documentation resource URIs. |
+| `query` | `sql: str` | Executes a DuckDB SQL query against registered views. Returns results as a markdown table (capped at 100 rows). |
+
+### Typical agent workflow
+
+1. Call `list_datasets()` to discover what's available
+2. Read `manifest://docs/{domain}` for the domain you want to query — this gives the agent full schema context, semantic types, known deficiencies, and query guidance
+3. Write SQL against the view names and call `query(sql)`
+
+### Client configuration
+
+The server uses stdio transport. To use it with Claude Desktop or another MCP client:
+
+```json
+{
+  "mcpServers": {
+    "manifest": {
+      "command": "uv",
+      "args": [
+        "run", "--directory", "/path/to/manifest-toolkit",
+        "mnf", "serve",
+        "--vocab", "vocabularies/",
+        "--desc", "descriptions/",
+        "--data", "/data/ais/",
+        "--data", "/data/polymarket/"
+      ]
+    }
+  }
+}
 ```
 
 ## Current State and Limitations
@@ -189,8 +252,9 @@ Manifest ships with two domain descriptions that together exercise the full voca
 ## Dependencies
 
 - `rdflib >= 7.0` — RDF graph loading and SPARQL
-- `duckdb >= 1.0` — efficient Parquet scanning for validation queries
+- `duckdb >= 1.0` — efficient Parquet scanning for validation queries and MCP server
 - `pyarrow >= 15.0` — Parquet schema inspection
 - `click >= 8.0` — CLI
+- `mcp >= 1.0` — Model Context Protocol server
 
-Optional: `h3` (for H3 derivation validation), `pytest` (for tests).
+Requires Python >= 3.12. Optional: `h3` (for H3 derivation validation), `pytest` (for tests).

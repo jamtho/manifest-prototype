@@ -758,6 +758,32 @@ def _render_agent_notes(graph: ManifestGraph, ds_uris: list[str]) -> list[str]:
     return lines
 
 
+@main.command()
+@click.option(
+    "--vocab", "-v",
+    multiple=True,
+    required=True,
+    help="Path to vocabulary .ttl file or directory",
+)
+@click.option(
+    "--desc",
+    multiple=True,
+    required=True,
+    help="Path to description .ttl file or directory",
+)
+@click.option(
+    "--data", "-d",
+    multiple=True,
+    help="Data root directory (one per domain)",
+)
+def serve(vocab: tuple[str, ...], desc: tuple[str, ...], data: tuple[str, ...]) -> None:
+    """Start the Manifest MCP server (stdio transport)."""
+    from manifest.server import create_server
+
+    server = create_server(list(vocab), list(desc), list(data) or None)
+    server.run(transport="stdio")
+
+
 def _find_dataset_for_column(
     g: Graph, col_node: URIRef, ds_set: set[URIRef],
 ) -> URIRef | None:
