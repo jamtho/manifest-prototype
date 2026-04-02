@@ -117,6 +117,28 @@ Validators run in cost order, cheapest first:
 
 Use `--max-level schema` for instant type-mismatch detection.
 
+## Description Validation (SHACL)
+
+The validation engine checks *data files* against descriptions. But what checks the *descriptions themselves*? `vocabularies/mnf_shapes.ttl` provides [SHACL](https://www.w3.org/TR/shacl/) shapes that validate the structure of Manifest description graphs — catching missing required properties, wrong value types, and malformed nested structures before any data is touched.
+
+```python
+from pyshacl import validate
+from rdflib import Graph
+
+data = Graph()
+data.parse("vocabularies/mnf_core.ttl")
+data.parse("descriptions/ais_description.ttl")
+
+shapes = Graph()
+shapes.parse("vocabularies/mnf_shapes.ttl")
+
+conforms, report_graph, report_text = validate(data, shacl_graph=shapes)
+if not conforms:
+    print(report_text)
+```
+
+22 shapes cover every class in the vocabulary: Dataset, Column, SemanticType, OrderingKey, AggregationRelationship, ForeignKey, and so on. They encode the structural assumptions that the Python graph loader and validation engine rely on, using only core SHACL features (`sh:property`, `sh:minCount`/`sh:maxCount`, `sh:datatype`, `sh:class`, `sh:in`, `sh:node`, `sh:or`). See [`docs/shacl-shapes.md`](docs/shacl-shapes.md) for full details, design decisions, and what the shapes intentionally don't cover.
+
 ## Structure
 
 ```
@@ -134,15 +156,19 @@ manifest-toolkit/
 │       ├── ordering.py       #   Row ordering + monotonicity (DuckDB)
 │       └── aggregation.py    #   Index/summary consistency (DuckDB)
 ├── vocabularies/             # Core Manifest vocabulary (domain-independent)
-│   └── mnf_core.ttl
+│   ├── mnf_core.ttl
+│   └── mnf_shapes.ttl        # SHACL shapes for description validation
 ├── descriptions/             # Domain-specific descriptions
 │   ├── ais_description.ttl           # NOAA AIS maritime data
 │   ├── polymarket_description.ttl    # Polymarket prediction-market data
+│   ├── foursquare_description.ttl    # Foursquare Open Source Places data
 │   └── generated/                    # Markdown tables (regenerate with mnf generate-docs)
 │       ├── ais_description.md
-│       └── polymarket_description.md
+│       ├── polymarket_description.md
+│       └── foursquare_description.md
 ├── docs/
-│   └── vocabulary-evolution.md       # How the Polymarket domain drove vocabulary extensions
+│   ├── vocabulary-evolution.md       # How the Polymarket domain drove vocabulary extensions
+│   └── shacl-shapes.md              # SHACL shapes: goals, design decisions, usage
 ├── pyproject.toml
 └── README.md
 ```
@@ -229,8 +255,9 @@ This is a v0.1 prototype. It works end-to-end against real data, but there are i
 2. Describe your datasets: columns, physical types, semantic types
 3. Declare derivations, aggregation relationships, ordering, provenance
 4. Use the newer vocabulary terms where applicable: `entityKey` for snapshot data, `AllowedValues` for categoricals, `embeddedStructure` for JSON-in-string, `ForeignKey` for cross-dataset links, `SameEntity` for shared identifiers, `schemaStability` for inferred schemas, `CompositePartitionScheme` for multi-level partitioning
-5. Run `mnf validate` — all standard checks (schema, ranges, ordering) work automatically
-6. For domain-specific constraints, implement validators and register them via `ValidatorRegistry`
+5. Validate the description itself with SHACL (`pyshacl`) to catch structural errors early
+6. Run `mnf validate` — all standard checks (schema, ranges, ordering) work automatically
+7. For domain-specific constraints, implement validators and register them via `ValidatorRegistry`
 
 The core vocabulary was extended once — when modelling Polymarket prediction-market data surfaced 7 genuinely domain-independent gaps (enum constraints, entity keys, embedded structure, multi-level partitioning, foreign keys, schema stability, cross-dataset identity). All additions were backward-compatible. See [`docs/vocabulary-evolution.md`](docs/vocabulary-evolution.md) for the full story.
 

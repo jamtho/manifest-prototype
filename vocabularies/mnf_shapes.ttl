@@ -1,0 +1,568 @@
+@prefix mnf:    <http://example.org/manifest#> .
+@prefix sh:     <http://www.w3.org/ns/shacl#> .
+@prefix rdf:    <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:   <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:    <http://www.w3.org/2001/XMLSchema#> .
+
+# =============================================================================
+# Manifest — SHACL Shapes
+# =============================================================================
+#
+# Validates the structure of Manifest description graphs. These shapes catch
+# authoring errors — missing required properties, wrong value types, incomplete
+# nested structures — before any data-level validation runs.
+#
+# Scope: validates that descriptions are well-formed, NOT that data files
+# conform to their descriptions. The engine handles data-level validation;
+# these shapes handle description-level validation.
+#
+# SHACL features used: sh:property, sh:minCount/maxCount, sh:datatype,
+# sh:class, sh:in, sh:node, sh:nodeKind, sh:or. No SPARQL-based constraints.
+#
+# Validation example (pyshacl):
+#
+#   from pyshacl import validate
+#   from rdflib import Graph
+#
+#   data = Graph()
+#   data.parse("vocabularies/mnf_core.ttl")
+#   data.parse("descriptions/ais_description.ttl")
+#
+#   shapes = Graph()
+#   shapes.parse("vocabularies/mnf_shapes.ttl")
+#
+#   conforms, report_graph, report_text = validate(data, shacl_graph=shapes)
+#   if not conforms:
+#       print(report_text)
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# 1. Dataset
+# -----------------------------------------------------------------------------
+
+mnf:DatasetShape a sh:NodeShape ;
+    sh:targetClass mnf:Dataset ;
+    sh:property [
+        sh:path rdfs:label ;
+        sh:minCount 1 ; sh:maxCount 1 ;
+        sh:datatype xsd:string ;
+        sh:message "Dataset must have exactly one rdfs:label." ;
+    ] ;
+    sh:property [
+        sh:path mnf:hasColumn ;
+        sh:minCount 1 ;
+        sh:nodeKind sh:IRI ;
+        sh:message "Dataset must declare at least one column (mnf:hasColumn)." ;
+    ] ;
+    sh:property [
+        sh:path mnf:hasPhysicalLayout ;
+        sh:maxCount 1 ;
+        sh:message "Dataset must have at most one physical layout." ;
+    ] ;
+    sh:property [
+        sh:path mnf:partitionedBy ;
+        sh:maxCount 1 ;
+        sh:message "Dataset must have at most one partition scheme." ;
+    ] ;
+    sh:property [
+        sh:path mnf:rowSemantics ;
+        sh:maxCount 1 ;
+        sh:in ( mnf:EventRow mnf:SnapshotRow mnf:AggregateRow ) ;
+        sh:message "rowSemantics must be EventRow, SnapshotRow, or AggregateRow." ;
+    ] ;
+    sh:property [
+        sh:path mnf:schemaStability ;
+        sh:maxCount 1 ;
+        sh:in ( mnf:FixedSchema mnf:InferredSchema mnf:VariableSchema ) ;
+        sh:message "schemaStability must be FixedSchema, InferredSchema, or VariableSchema." ;
+    ] ;
+    sh:property [
+        sh:path mnf:entityKey ;
+        sh:nodeKind sh:IRI ;
+        # Multiple entity keys allowed for composite keys (e.g. condition_id + token).
+    ] ;
+    sh:property [
+        sh:path mnf:snapshotTimestamp ;
+        sh:maxCount 1 ;
+        sh:nodeKind sh:IRI ;
+    ] ;
+    sh:property [
+        sh:path mnf:hasProvenance ;
+        sh:maxCount 1 ;
+    ] ;
+    # Note: datasets with rowSemantics=SnapshotRow SHOULD also declare
+    # entityKey and snapshotTimestamp. This conditional expectation is
+    # documented here rather than enforced, to keep shapes simple.
+    .
+
+
+# -----------------------------------------------------------------------------
+# 2. Column
+# -----------------------------------------------------------------------------
+
+mnf:ColumnShape a sh:NodeShape ;
+    sh:targetClass mnf:Column ;
+    sh:property [
+        sh:path mnf:columnName ;
+        sh:minCount 1 ; sh:maxCount 1 ;
+        sh:datatype xsd:string ;
+        sh:message "Column must have exactly one columnName (string)." ;
+    ] ;
+    sh:property [
+        sh:path mnf:physicalType ;
+        sh:minCount 1 ; sh:maxCount 1 ;
+        sh:class mnf:PhysicalType ;
+        sh:message "Column must declare exactly one physicalType." ;
+    ] ;
+    sh:property [
+        sh:path mnf:semanticType ;
+        sh:maxCount 1 ;
+    ] ;
+    sh:property [
+        sh:path mnf:nullable ;
+        sh:maxCount 1 ;
+        sh:datatype xsd:boolean ;
+        sh:message "nullable must be a boolean if declared." ;
+    ] ;
+    sh:property [
+        sh:path mnf:embeddedStructure ;
+        sh:maxCount 1 ;
+        sh:node mnf:EmbeddedStructureShape ;
+    ] ;
+    .
+
+
+# -----------------------------------------------------------------------------
+# 3. Semantic Type
+# -----------------------------------------------------------------------------
+
+mnf:SemanticTypeShape a sh:NodeShape ;
+    sh:targetClass mnf:SemanticType ;
+    sh:property [
+        sh:path rdfs:label ;
+        sh:minCount 1 ; sh:maxCount 1 ;
+        sh:datatype xsd:string ;
+        sh:message "SemanticType must have exactly one rdfs:label." ;
+    ] ;
+    sh:property [
+        sh:path mnf:requiredPhysicalType ;
+        sh:maxCount 1 ;
+        sh:class mnf:PhysicalType ;
+    ] ;
+    sh:property [
+        sh:path mnf:valueRange ;
+        sh:maxCount 1 ;
+        sh:node mnf:ValueRangeShape ;
+    ] ;
+    sh:property [
+        sh:path mnf:unit ;
+        sh:maxCount 1 ;
+        sh:datatype xsd:string ;
+    ] ;
+    sh:property [
+        sh:path mnf:hasAllowedValues ;
+        sh:maxCount 1 ;
+        sh:node mnf:AllowedValuesShape ;
+    ] ;
+    .
+
+
+# -----------------------------------------------------------------------------
+# 4. Value Range
+# -----------------------------------------------------------------------------
+#
+# At least one bound must be declared, otherwise the range is vacuous.
+# Bound values are not type-constrained because Turtle integer literals
+# (e.g. 100000000) parse as xsd:integer, not xsd:decimal.
+# -----------------------------------------------------------------------------
+
+mnf:ValueRangeShape a sh:NodeShape ;
+    sh:or (
+        [ sh:property [ sh:path mnf:minInclusive ; sh:minCount 1 ] ]
+        [ sh:property [ sh:path mnf:maxInclusive ; sh:minCount 1 ] ]
+        [ sh:property [ sh:path mnf:minExclusive ; sh:minCount 1 ] ]
+        [ sh:property [ sh:path mnf:maxExclusive ; sh:minCount 1 ] ]
+    ) ;
+    sh:property [
+        sh:path mnf:minInclusive ; sh:maxCount 1 ;
+    ] ;
+    sh:property [
+        sh:path mnf:maxInclusive ; sh:maxCount 1 ;
+    ] ;
+    sh:property [
+        sh:path mnf:minExclusive ; sh:maxCount 1 ;
+    ] ;
+    sh:property [
+        sh:path mnf:maxExclusive ; sh:maxCount 1 ;
+    ] ;
+    sh:message "ValueRange must declare at least one bound." ;
+    .
+
+
+# -----------------------------------------------------------------------------
+# 5. Allowed Values
+# -----------------------------------------------------------------------------
+
+mnf:AllowedValuesShape a sh:NodeShape ;
+    sh:targetClass mnf:AllowedValues ;
+    sh:property [
+        sh:path mnf:allowedValue ;
+        sh:minCount 1 ;
+        sh:datatype xsd:string ;
+        sh:message "AllowedValues must declare at least one allowedValue (string)." ;
+    ] .
+
+
+# -----------------------------------------------------------------------------
+# 6. Physical Layout
+# -----------------------------------------------------------------------------
+
+mnf:PhysicalLayoutShape a sh:NodeShape ;
+    sh:targetClass mnf:PhysicalLayout ;
+    sh:property [
+        sh:path mnf:fileFormat ;
+        sh:minCount 1 ; sh:maxCount 1 ;
+        sh:class mnf:FileFormat ;
+        sh:message "PhysicalLayout must declare exactly one fileFormat." ;
+    ] ;
+    sh:property [
+        sh:path mnf:hasRowOrdering ;
+        sh:maxCount 1 ;
+        sh:node mnf:RowOrderingShape ;
+    ] .
+
+
+# -----------------------------------------------------------------------------
+# 7. Row Ordering and Ordering Key
+# -----------------------------------------------------------------------------
+
+mnf:RowOrderingShape a sh:NodeShape ;
+    sh:targetClass mnf:RowOrdering ;
+    sh:property [
+        sh:path mnf:hasOrderingKey ;
+        sh:minCount 1 ;
+        sh:node mnf:OrderingKeyShape ;
+        sh:message "RowOrdering must have at least one ordering key." ;
+    ] .
+
+mnf:OrderingKeyShape a sh:NodeShape ;
+    sh:targetClass mnf:OrderingKey ;
+    sh:property [
+        sh:path mnf:keyColumn ;
+        sh:minCount 1 ; sh:maxCount 1 ;
+        sh:nodeKind sh:IRI ;
+        sh:message "OrderingKey must reference exactly one keyColumn." ;
+    ] ;
+    sh:property [
+        sh:path mnf:keyDirection ;
+        sh:minCount 1 ; sh:maxCount 1 ;
+        sh:in ( mnf:Ascending mnf:Descending ) ;
+        sh:message "keyDirection must be Ascending or Descending." ;
+    ] ;
+    sh:property [
+        sh:path mnf:keyPrecedence ;
+        sh:minCount 1 ; sh:maxCount 1 ;
+        sh:datatype xsd:integer ;
+        sh:message "keyPrecedence must be exactly one integer." ;
+    ] ;
+    sh:property [
+        sh:path mnf:orderingSemantic ;
+        sh:maxCount 1 ;
+        sh:class mnf:OrderingSemanticType ;
+    ] .
+
+
+# -----------------------------------------------------------------------------
+# 8. Partition Scheme
+# -----------------------------------------------------------------------------
+
+mnf:PartitionSchemeShape a sh:NodeShape ;
+    sh:targetClass mnf:PartitionScheme ;
+    sh:property [
+        sh:path mnf:pathTemplate ;
+        sh:minCount 1 ; sh:maxCount 1 ;
+        sh:datatype xsd:string ;
+        sh:message "PartitionScheme must declare exactly one pathTemplate." ;
+    ] .
+
+mnf:CompositePartitionSchemeShape a sh:NodeShape ;
+    sh:targetClass mnf:CompositePartitionScheme ;
+    sh:property [
+        sh:path mnf:hasPartitionLevel ;
+        sh:minCount 1 ;
+        sh:node mnf:PartitionLevelShape ;
+        sh:message "CompositePartitionScheme must have at least one partition level." ;
+    ] .
+
+mnf:PartitionLevelShape a sh:NodeShape ;
+    sh:targetClass mnf:PartitionLevel ;
+    sh:property [
+        sh:path mnf:levelPrecedence ;
+        sh:minCount 1 ; sh:maxCount 1 ;
+        sh:datatype xsd:integer ;
+        sh:message "PartitionLevel must declare levelPrecedence (integer)." ;
+    ] ;
+    sh:property [
+        sh:path mnf:levelColumn ;
+        sh:minCount 1 ; sh:maxCount 1 ;
+        sh:datatype xsd:string ;
+        sh:message "PartitionLevel must declare levelColumn (string)." ;
+    ] ;
+    sh:property [
+        sh:path mnf:levelGranularity ;
+        sh:minCount 1 ; sh:maxCount 1 ;
+        sh:class mnf:TemporalGranularity ;
+        sh:message "PartitionLevel must declare levelGranularity." ;
+    ] .
+
+
+# -----------------------------------------------------------------------------
+# 9. Column Group
+# -----------------------------------------------------------------------------
+
+mnf:ColumnGroupShape a sh:NodeShape ;
+    sh:targetClass mnf:ColumnGroup ;
+    sh:property [
+        sh:path mnf:groupSemanticType ;
+        sh:minCount 1 ; sh:maxCount 1 ;
+        sh:message "ColumnGroup must declare its composite semanticType." ;
+    ] ;
+    sh:property [
+        sh:path mnf:groupMember ;
+        sh:minCount 2 ;
+        sh:nodeKind sh:IRI ;
+        sh:message "ColumnGroup must have at least two member columns." ;
+    ] .
+
+
+# -----------------------------------------------------------------------------
+# 10. Derivation
+# -----------------------------------------------------------------------------
+
+mnf:DerivationShape a sh:NodeShape ;
+    sh:targetClass mnf:Derivation ;
+    sh:property [
+        sh:path mnf:derivedColumn ;
+        sh:minCount 1 ; sh:maxCount 1 ;
+        sh:nodeKind sh:IRI ;
+        sh:message "Derivation must specify exactly one derivedColumn." ;
+    ] ;
+    sh:property [
+        sh:path mnf:sourceColumn ;
+        sh:nodeKind sh:IRI ;
+        # sourceColumn is optional: injection-style derivations (e.g. fetcher-
+        # injected timestamps) have no source column in the data.
+    ] ;
+    sh:property [
+        sh:path mnf:derivationFunction ;
+        sh:minCount 1 ; sh:maxCount 1 ;
+        sh:message "Derivation must specify exactly one derivationFunction." ;
+    ] .
+
+
+# -----------------------------------------------------------------------------
+# 11. Aggregation Relationship
+# -----------------------------------------------------------------------------
+
+mnf:AggregationRelationshipShape a sh:NodeShape ;
+    sh:targetClass mnf:AggregationRelationship ;
+    sh:property [
+        sh:path mnf:sourceDataset ;
+        sh:minCount 1 ; sh:maxCount 1 ;
+        sh:nodeKind sh:IRI ;
+        sh:message "AggregationRelationship must reference exactly one sourceDataset." ;
+    ] ;
+    sh:property [
+        sh:path mnf:targetDataset ;
+        sh:minCount 1 ; sh:maxCount 1 ;
+        sh:nodeKind sh:IRI ;
+        sh:message "AggregationRelationship must reference exactly one targetDataset." ;
+    ] ;
+    sh:property [
+        sh:path mnf:groupByColumn ;
+        sh:minCount 1 ;
+        sh:nodeKind sh:IRI ;
+        sh:message "AggregationRelationship must have at least one groupByColumn." ;
+    ] ;
+    sh:property [
+        sh:path mnf:hasAggregatedColumn ;
+        sh:minCount 1 ;
+        sh:node mnf:AggregatedColumnShape ;
+        sh:message "AggregationRelationship must have at least one aggregated column." ;
+    ] .
+
+# Validated via sh:node — instances are typically inline blank nodes
+# without explicit rdf:type mnf:AggregatedColumn.
+mnf:AggregatedColumnShape a sh:NodeShape ;
+    sh:property [
+        sh:path mnf:targetColumn ;
+        sh:minCount 1 ; sh:maxCount 1 ;
+        sh:nodeKind sh:IRI ;
+        sh:message "AggregatedColumn must reference exactly one targetColumn." ;
+    ] ;
+    sh:property [
+        sh:path mnf:aggregationSourceColumn ;
+        sh:minCount 1 ;
+        sh:nodeKind sh:IRI ;
+        sh:message "AggregatedColumn must have at least one source column." ;
+    ] ;
+    sh:property [
+        sh:path mnf:aggregationFunction ;
+        sh:minCount 1 ; sh:maxCount 1 ;
+        sh:message "AggregatedColumn must specify an aggregation function." ;
+    ] ;
+    sh:property [
+        sh:path mnf:withinGroupOrdering ;
+        sh:maxCount 1 ;
+        sh:nodeKind sh:IRI ;
+    ] .
+
+
+# -----------------------------------------------------------------------------
+# 12. Foreign Key
+# -----------------------------------------------------------------------------
+
+mnf:ForeignKeyShape a sh:NodeShape ;
+    sh:targetClass mnf:ForeignKey ;
+    sh:property [
+        sh:path mnf:foreignKeyFrom ;
+        sh:minCount 1 ; sh:maxCount 1 ;
+        sh:nodeKind sh:IRI ;
+        sh:message "ForeignKey must specify exactly one source column (foreignKeyFrom)." ;
+    ] ;
+    sh:property [
+        sh:path mnf:foreignKeyTo ;
+        sh:minCount 1 ; sh:maxCount 1 ;
+        sh:nodeKind sh:IRI ;
+        sh:message "ForeignKey must specify exactly one target column (foreignKeyTo)." ;
+    ] ;
+    sh:property [
+        sh:path mnf:referentialIntegrity ;
+        sh:maxCount 1 ;
+        sh:in ( mnf:StrictIntegrity mnf:EventualIntegrity mnf:PartialIntegrity ) ;
+        sh:message "referentialIntegrity must be Strict, Eventual, or Partial." ;
+    ] .
+
+
+# -----------------------------------------------------------------------------
+# 13. Same Entity (Cross-Dataset Identity)
+# -----------------------------------------------------------------------------
+
+mnf:SameEntityShape a sh:NodeShape ;
+    sh:targetClass mnf:SameEntity ;
+    sh:property [
+        sh:path rdfs:label ;
+        sh:minCount 1 ; sh:maxCount 1 ;
+        sh:datatype xsd:string ;
+        sh:message "SameEntity must have a label describing the relationship." ;
+    ] ;
+    sh:property [
+        sh:path mnf:identifyingColumn ;
+        sh:minCount 2 ;
+        sh:nodeKind sh:IRI ;
+        sh:message "SameEntity must link at least two identifying columns." ;
+    ] .
+
+
+# -----------------------------------------------------------------------------
+# 14. Embedded Structure
+# -----------------------------------------------------------------------------
+
+mnf:EmbeddedStructureShape a sh:NodeShape ;
+    sh:targetClass mnf:EmbeddedStructure ;
+    sh:property [
+        sh:path mnf:embeddedFormat ;
+        sh:minCount 1 ; sh:maxCount 1 ;
+        sh:class mnf:DataEncodingFormat ;
+        sh:message "EmbeddedStructure must declare an encoding format." ;
+    ] ;
+    sh:property [
+        sh:path mnf:embeddedElementType ;
+        sh:minCount 1 ; sh:maxCount 1 ;
+        sh:datatype xsd:string ;
+        sh:message "EmbeddedStructure must describe the inner element type." ;
+    ] .
+
+
+# -----------------------------------------------------------------------------
+# 15. Known Deficiency
+# -----------------------------------------------------------------------------
+
+mnf:KnownDeficiencyShape a sh:NodeShape ;
+    sh:targetClass mnf:KnownDeficiency ;
+    sh:property [
+        sh:path mnf:deficiencyDescription ;
+        sh:minCount 1 ; sh:maxCount 1 ;
+        sh:datatype xsd:string ;
+        sh:message "KnownDeficiency must have a description." ;
+    ] ;
+    sh:property [
+        sh:path mnf:severity ;
+        sh:minCount 1 ; sh:maxCount 1 ;
+        sh:in ( mnf:Minor mnf:Moderate mnf:Severe ) ;
+        sh:message "severity must be Minor, Moderate, or Severe." ;
+    ] ;
+    sh:property [
+        sh:path mnf:impact ;
+        sh:maxCount 1 ;
+        sh:datatype xsd:string ;
+    ] .
+
+
+# -----------------------------------------------------------------------------
+# 16. Provenance
+# -----------------------------------------------------------------------------
+
+mnf:ProvenanceShape a sh:NodeShape ;
+    sh:targetClass mnf:Provenance ;
+    sh:or (
+        [ sh:property [ sh:path mnf:source ; sh:minCount 1 ] ]
+        [ sh:property [ sh:path mnf:sourceDescription ; sh:minCount 1 ] ]
+    ) ;
+    sh:property [
+        sh:path mnf:source ;
+        sh:maxCount 1 ;
+    ] ;
+    sh:property [
+        sh:path mnf:sourceDescription ;
+        sh:maxCount 1 ;
+        sh:datatype xsd:string ;
+    ] ;
+    sh:message "Provenance must have at least a source URI or sourceDescription." ;
+    .
+
+mnf:TransformationShape a sh:NodeShape ;
+    sh:targetClass mnf:Transformation ;
+    sh:property [
+        sh:path mnf:transformationType ;
+        sh:minCount 1 ; sh:maxCount 1 ;
+        sh:datatype xsd:string ;
+        sh:message "Transformation must declare a type." ;
+    ] ;
+    sh:property [
+        sh:path mnf:transformationDescription ;
+        sh:minCount 1 ; sh:maxCount 1 ;
+        sh:datatype xsd:string ;
+        sh:message "Transformation must have a description." ;
+    ] .
+
+
+# -----------------------------------------------------------------------------
+# 17. Verification Attestation
+# -----------------------------------------------------------------------------
+
+mnf:VerificationAttestationShape a sh:NodeShape ;
+    sh:targetClass mnf:VerificationAttestation ;
+    sh:property [
+        sh:path mnf:verificationResult ;
+        sh:minCount 1 ; sh:maxCount 1 ;
+        sh:in ( mnf:Pass mnf:Fail mnf:Partial mnf:Error ) ;
+        sh:message "Attestation must have a result (Pass, Fail, Partial, Error)." ;
+    ] ;
+    sh:property [
+        sh:path mnf:verificationTime ;
+        sh:minCount 1 ; sh:maxCount 1 ;
+        sh:datatype xsd:dateTime ;
+        sh:message "Attestation must record the verification time." ;
+    ] .
