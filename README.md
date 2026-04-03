@@ -166,6 +166,8 @@ manifest-toolkit/
 │       ├── ais_description.md
 │       ├── polymarket_description.md
 │       └── foursquare_description.md
+├── tests/
+│   └── test_server.py               # MCP server helper tests
 ├── docs/
 │   ├── vocabulary-evolution.md       # How the Polymarket domain drove vocabulary extensions
 │   └── shacl-shapes.md              # SHACL shapes: goals, design decisions, usage
@@ -205,7 +207,7 @@ On startup the server:
 | Tool | Parameters | Description |
 |------|------------|-------------|
 | `list_datasets` | — | Returns available datasets with view names, column counts, row counts, and documentation resource URIs. |
-| `query` | `sql: str` | Executes a DuckDB SQL query against registered views. Returns results as a markdown table (capped at 100 rows). |
+| `query` | `sql: str`, `format: str` | Executes a DuckDB SQL query against registered views. Format is `"markdown"` (default, 100 row limit) or `"csv"` (denser, 500 row limit). Truncated results include a per-column statistical summary (type, min, max, approx unique, avg, null%) of the full result set. |
 
 ### Typical agent workflow
 
@@ -285,3 +287,11 @@ Manifest ships with two domain descriptions that together exercise the full voca
 - `mcp >= 1.0` — Model Context Protocol server
 
 Requires Python >= 3.12. Optional: `h3` (for H3 derivation validation), `pytest` (for tests).
+
+## Tests
+
+```bash
+uv run --extra dev pytest
+```
+
+Tests cover the MCP server helpers: path template globbing, markdown/CSV formatting, and DuckDB query summarisation.

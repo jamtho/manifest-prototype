@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import csv
+import io
 import re
 from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
@@ -151,6 +153,70 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
         db.close()
 
 
+def _format_markdown_table(columns: list[str], rows: list[tuple]) -> str:
+    """Format rows as a markdown table."""
+    lines = [
+        "| " + " | ".join(columns) + " |",
+        "| " + " | ".join("---" for _ in columns) + " |",
+    ]
+    for row in rows:
+        cells = [str(v) if v is not None else "NULL" for v in row]
+        lines.append("| " + " | ".join(cells) + " |")
+    return "\n".join(lines)
+
+
+def _format_csv(columns: list[str], rows: list[tuple]) -> str:
+    """Format rows as CSV text."""
+    buf = io.StringIO(newline="")
+    writer = csv.writer(buf)
+    writer.writerow(columns)
+    for row in rows:
+        writer.writerow("" if v is None else v for v in row)
+    # csv module writes \r\n per RFC 4180; strip for MCP text responses
+    return buf.getvalue().replace("\r\n", "\n").rstrip("\n")
+
+
+def _summarise_query(db: duckdb.DuckDBPyConnection, sql: str) -> str:
+    """Return a compact statistical summary of the full query result.
+
+    Uses DuckDB's SUMMARIZE to compute per-column stats (type, min, max,
+    approx unique, avg, null%) over the complete result set.
+    """
+    try:
+        result = db.execute(f"SUMMARIZE ({sql})")
+        summary_cols = [desc[0] for desc in result.description]
+        summary_rows = result.fetchall()
+    except duckdb.Error:
+        return ""
+
+    if not summary_rows:
+        return ""
+
+    # Pick the most useful columns for a compact summary
+    want = ["column_name", "column_type", "min", "max",
+            "approx_unique", "avg", "count", "null_percentage"]
+    indices = []
+    headers = []
+    for col in want:
+        if col in summary_cols:
+            indices.append(summary_cols.index(col))
+            headers.append(col)
+
+    if not indices:
+        return ""
+
+    lines = [
+        "\n**Full result summary:**",
+        "| " + " | ".join(headers) + " |",
+        "| " + " | ".join("---" for _ in headers) + " |",
+    ]
+    for row in summary_rows:
+        cells = [str(row[i]) if row[i] is not None else "" for i in indices]
+        lines.append("| " + " | ".join(cells) + " |")
+
+    return "\n".join(lines)
+
+
 def create_server(
     vocab_paths: list[str],
     desc_paths: list[str],
@@ -183,12 +249,17 @@ def create_server(
         return md
 
     @mcp.tool()
-    def query(sql: str, ctx: Context) -> str:
+    def query(sql: str, format: str = "markdown", ctx: Context = None) -> str:
         """Execute a DuckDB SQL query against registered dataset views.
 
         Use list_datasets() first to discover available views and read
         manifest://docs/{domain} resources for schema details before querying.
-        Returns results as a markdown table (capped at 100 rows).
+
+        Args:
+            sql: The SQL query to execute.
+            format: Response format — "markdown" (default, 100 row limit) or
+                "csv" (denser, 500 row limit). Both formats append a statistical
+                summary when the result is truncated.
         """
         app: AppContext = ctx.request_context.lifespan_context
         if not app.views:
@@ -196,30 +267,42 @@ def create_server(
                 "No data configured. Start the server with --data to "
                 "register dataset views for querying."
             )
+
+        if format not in ("markdown", "csv"):
+            return f"Unknown format '{format}'. Use 'markdown' or 'csv'."
+
+        row_limit = 100 if format == "markdown" else 500
+
         try:
             result = app.db.execute(sql)
             columns = [desc[0] for desc in result.description]
-            rows = result.fetchmany(100)
+            rows = result.fetchmany(row_limit)
         except duckdb.Error as e:
             return f"Query error: {e}"
 
         if not rows:
             return "Query returned no results."
 
-        # Format as markdown table
-        lines = [
-            "| " + " | ".join(columns) + " |",
-            "| " + " | ".join("---" for _ in columns) + " |",
-        ]
-        for row in rows:
-            cells = [str(v) if v is not None else "NULL" for v in row]
-            lines.append("| " + " | ".join(cells) + " |")
+        try:
+            total = app.db.execute(
+                f"SELECT count(*) FROM ({sql})"
+            ).fetchone()[0]
+        except duckdb.Error:
+            total = len(rows)
 
-        total = app.db.execute(f"SELECT count(*) FROM ({sql})").fetchone()[0]
-        if total > 100:
-            lines.append(f"\n*Showing 100 of {total:,} rows.*")
+        truncated = total > row_limit
 
-        return "\n".join(lines)
+        # Format rows
+        if format == "csv":
+            output = _format_csv(columns, rows)
+        else:
+            output = _format_markdown_table(columns, rows)
+
+        if truncated:
+            output += f"\n\n*Showing {len(rows):,} of {total:,} rows.*\n"
+            output += _summarise_query(app.db, sql)
+
+        return output
 
     @mcp.tool()
     def list_datasets(ctx: Context) -> str:
