@@ -177,59 +177,71 @@ manifest-toolkit/
 
 ## MCP Server
 
-Manifest includes an [MCP](https://modelcontextprotocol.io/) server that lets AI agents query your data using the Manifest metadata as context. The server exposes dataset documentation as resources and DuckDB-backed SQL execution as tools.
+Manifest includes an [MCP](https://modelcontextprotocol.io/) server that exposes dataset metadata to AI agents. It supports two modes:
+
+- **SQL advisor** — the agent reads the Manifest metadata (vocabulary, descriptions, relationships) and uses it to write correct DuckDB SQL for the client to execute on their own connection (e.g. DuckDB on S3). This is the primary use case.
+- **Query execution** — with `--data`, the server also registers DuckDB views from local Parquet files and can execute queries directly.
 
 ```bash
-# Metadata-only mode — resources and discovery work, queries return "no data configured"
+# SQL advisor mode — metadata only, no data access needed
 mnf serve --vocab vocabularies/ --desc descriptions/
 
-# With data — registers DuckDB views from Parquet files matched via path templates
+# With data — also registers DuckDB views for server-side query execution
 mnf serve --vocab vocabularies/ --desc descriptions/ \
     --data /data/ais/ --data /data/polymarket/
+```
+
+The project includes an `.mcp.json` that configures the server for Claude Code:
+
+```bash
+# Start a Claude Code session in the project directory — the MCP server starts automatically
+claude
 ```
 
 ### How it works
 
 On startup the server:
 1. Loads the Manifest graph from vocabulary and description files
-2. Creates an in-memory DuckDB connection
-3. For each dataset with a `partition_path_template`, converts the template to a glob (e.g. `broadcasts/{year}/ais-{date}.parquet` → `broadcasts/*/ais-*.parquet`), checks each `--data` root for matching files, and registers a DuckDB view
-4. Pre-renders markdown documentation for each description file
+2. Loads raw Turtle content for vocabulary and description resources
+3. Pre-renders markdown documentation for each description file
+4. If `--data` is provided: creates an in-memory DuckDB connection, converts partition path templates to globs, and registers views for datasets with matching files
 
 ### Resources
 
+The server exposes the Manifest metadata in two formats — rendered markdown documentation and raw RDF Turtle. The markdown is human-friendly; the Turtle gives the agent full access to everything in the graph.
+
 | URI | Description |
 |-----|-------------|
-| `manifest://docs/{domain}` | Full markdown documentation for a domain (e.g. `manifest://docs/ais`, `manifest://docs/polymarket`). Includes schemas, semantic types, ordering, relationships, deficiencies, and agent notes. |
-| `manifest://vocabulary` | The core Manifest vocabulary as raw Turtle (RDF). Defines all classes, properties, and named individuals. |
+| `manifest://vocabulary` | The core Manifest vocabulary as raw Turtle (RDF). Defines all classes, properties, and named individuals. Read this to understand what the properties in description files mean. |
 | `manifest://description/{domain}` | A domain description as raw Turtle (RDF). Full dataset metadata: columns, types, layout, partitioning, ordering, derivations, relationships, deficiencies, provenance. |
+| `manifest://docs/{domain}` | Pre-rendered markdown documentation for a domain. Includes schemas, semantic types, ordering, relationships, deficiencies, and agent notes. |
 
 ### Tools
 
 | Tool | Parameters | Description |
 |------|------------|-------------|
 | `list_datasets` | — | Returns available datasets with view names, column counts, row counts, and documentation resource URIs. |
-| `query` | `sql: str`, `format: str` | Executes a DuckDB SQL query against registered views. Format is `"markdown"` (default, 100 row limit) or `"csv"` (denser, 500 row limit). Truncated results include a per-column statistical summary (type, min, max, approx unique, avg, null%) of the full result set. |
 | `setup_views` | `s3_prefix: str` | Generates `CREATE VIEW` statements for all datasets, combining the S3 prefix with each dataset's path template. For client-side DuckDB connected to S3. |
 | `sparql` | `query: str` | Executes a SPARQL query against the loaded Manifest graph. Standard prefixes (mnf:, ais:, pm:, etc.) are injected automatically. Returns results as a markdown table. |
+| `query` | `sql: str`, `format: str` | Executes a DuckDB SQL query against registered views (requires `--data`). Format is `"markdown"` (default, 100 row limit) or `"csv"` (denser, 500 row limit). Truncated results include a per-column statistical summary of the full result set. |
 
 ### Typical agent workflow
+
+**SQL advisor** (client has own DuckDB, e.g. on S3):
+1. Call `list_datasets()` to discover available datasets
+2. Read `manifest://description/{domain}` for the full RDF metadata — columns, types, partitioning, relationships, known deficiencies
+3. Call `setup_views(s3_prefix)` to get `CREATE VIEW` statements; execute them on the client's DuckDB
+4. Use `sparql(query)` to drill into specific metadata (e.g. foreign keys, value ranges) when needed
+5. Write correct SQL using the metadata context; the client executes it
 
 **Server-side query execution** (server has data access via `--data`):
 1. Call `list_datasets()` to discover what's available
 2. Read `manifest://docs/{domain}` for schema context
 3. Write SQL against the view names and call `query(sql)`
 
-**Client-side SQL generation** (client has own DuckDB on S3):
-1. Call `list_datasets()` to discover available datasets
-2. Read `manifest://description/{domain}` or `manifest://vocabulary` for the full RDF metadata
-3. Call `setup_views(s3_prefix)` to get `CREATE VIEW` statements, execute them on your DuckDB
-4. Use `sparql(query)` to drill into specific metadata when needed
-5. Write and execute SQL on your own connection
-
 ### Client configuration
 
-The server uses stdio transport. To use it with Claude Desktop or another MCP client:
+The server uses stdio transport. To configure it for Claude Code, add to `.mcp.json`:
 
 ```json
 {
@@ -240,9 +252,7 @@ The server uses stdio transport. To use it with Claude Desktop or another MCP cl
         "run", "--directory", "/path/to/manifest-toolkit",
         "mnf", "serve",
         "--vocab", "vocabularies/",
-        "--desc", "descriptions/",
-        "--data", "/data/ais/",
-        "--data", "/data/polymarket/"
+        "--desc", "descriptions/"
       ]
     }
   }

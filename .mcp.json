@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "manifest": {
+      "command": "uv",
+      "args": [
+        "run",
+        "mnf", "serve",
+        "--vocab", "vocabularies/",
+        "--desc", "descriptions/"
+      ]
+    }
+  }
+}
