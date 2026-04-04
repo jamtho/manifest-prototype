@@ -91,6 +91,13 @@ mnf:DatasetShape a sh:NodeShape ;
         sh:path mnf:hasProvenance ;
         sh:maxCount 1 ;
     ] ;
+    sh:property [
+        sh:path mnf:pathTemplate ;
+        sh:maxCount 1 ;
+        sh:datatype xsd:string ;
+        # Dataset-level pathTemplate overrides the partition scheme's template,
+        # resolving shared placeholders to this dataset's concrete path.
+    ] ;
     # Note: datasets with rowSemantics=SnapshotRow SHOULD also declare
     # entityKey and snapshotTimestamp. This conditional expectation is
     # documented here rather than enforced, to keep shapes simple.

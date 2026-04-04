@@ -536,10 +536,13 @@ mnf:partitionGranularity a rdf:Property ;
     rdfs:comment "The temporal granularity of the partition." .
 
 mnf:pathTemplate a rdf:Property ;
-    rdfs:domain mnf:PartitionScheme ;
     rdfs:range xsd:string ;
     rdfs:comment """Path template with placeholders, e.g.
-        'broadcasts/{year}/ais-{date}.parquet'""" .
+        'broadcasts/{year}/ais-{date}.parquet'.
+        May appear on a PartitionScheme (shared pattern with unresolved
+        placeholders) or directly on a Dataset (resolved, concrete path
+        for that specific dataset). When present on both, the dataset-level
+        template takes precedence.""" .
 
 mnf:redundantPartitionKey a rdf:Property ;
     rdfs:domain mnf:PartitionScheme ;

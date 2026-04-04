@@ -24,6 +24,8 @@ class AppContext:
     db: duckdb.DuckDBPyConnection
     views: dict[str, str] = field(default_factory=dict)  # view_name -> dataset_uri
     docs: dict[str, str] = field(default_factory=dict)  # domain_name -> markdown
+    vocab_ttl: str = ""  # raw core vocabulary Turtle content
+    desc_ttl: dict[str, str] = field(default_factory=dict)  # domain_name -> raw Turtle
 
 
 def _template_to_glob(template: str) -> str:
@@ -129,6 +131,32 @@ def _render_docs(
     return docs
 
 
+def _load_vocab_ttl(vocab_paths: list[str]) -> str:
+    """Load and concatenate all vocabulary Turtle files as raw text."""
+    parts: list[str] = []
+    for p in vocab_paths:
+        path = Path(p)
+        files = sorted(path.glob("*.ttl")) if path.is_dir() else [path]
+        for f in files:
+            # Skip shapes files — only serve the core vocabulary
+            if "shapes" in f.name:
+                continue
+            parts.append(f.read_text())
+    return "\n".join(parts)
+
+
+def _load_desc_ttl(desc_paths: list[str]) -> dict[str, str]:
+    """Load description Turtle files as raw text, keyed by domain name."""
+    result: dict[str, str] = {}
+    for p in desc_paths:
+        path = Path(p)
+        files = sorted(path.glob("*.ttl")) if path.is_dir() else [path]
+        for f in files:
+            domain = f.stem.replace("_description", "")
+            result[domain] = f.read_text()
+    return result
+
+
 @asynccontextmanager
 async def app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
     """Initialize ManifestGraph, DuckDB, and register views on startup."""
@@ -145,8 +173,13 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
     views = _register_views(db, graph, data_roots) if data_roots else {}
 
     docs = _render_docs(graph, config["desc_paths"])
+    vocab_ttl = _load_vocab_ttl(config["vocab_paths"])
+    desc_ttl = _load_desc_ttl(config["desc_paths"])
 
-    ctx = AppContext(graph=graph, db=db, views=views, docs=docs)
+    ctx = AppContext(
+        graph=graph, db=db, views=views, docs=docs,
+        vocab_ttl=vocab_ttl, desc_ttl=desc_ttl,
+    )
     try:
         yield ctx
     finally:
@@ -348,5 +381,120 @@ def create_server(
                 lines.append(f"- `manifest://docs/{domain}`")
 
         return "\n".join(lines)
+
+    # -----------------------------------------------------------------
+    # Raw Turtle resources — direct access to the RDF
+    # -----------------------------------------------------------------
+
+    @mcp.resource("manifest://vocabulary")
+    def get_vocabulary() -> str:
+        """Get the core Manifest vocabulary as raw Turtle (RDF).
+
+        Defines all classes, properties, and named individuals used in
+        dataset descriptions. Read this to understand what the properties
+        and types in description files mean.
+        """
+        app: AppContext = mcp.get_context().request_context.lifespan_context
+        return app.vocab_ttl
+
+    @mcp.resource("manifest://description/{domain}")
+    def get_description(domain: str) -> str:
+        """Get a domain description as raw Turtle (RDF).
+
+        Contains the full dataset metadata: columns, semantic types,
+        physical layout, partitioning, ordering, derivations, aggregation
+        relationships, foreign keys, known deficiencies, and provenance.
+        """
+        app: AppContext = mcp.get_context().request_context.lifespan_context
+        ttl = app.desc_ttl.get(domain)
+        if ttl is None:
+            available = ", ".join(sorted(app.desc_ttl.keys())) or "(none)"
+            return f"Unknown domain '{domain}'. Available: {available}"
+        return ttl
+
+    # -----------------------------------------------------------------
+    # SPARQL tool — query the graph directly
+    # -----------------------------------------------------------------
+
+    @mcp.tool()
+    def sparql(query: str, ctx: Context = None) -> str:
+        """Execute a SPARQL query against the loaded Manifest graph.
+
+        Standard prefixes are injected automatically:
+        mnf:, ais:, pm:, fsq:, rdfs:, rdf:, xsd:
+
+        Returns results as a markdown table.
+        """
+        app: AppContext = ctx.request_context.lifespan_context
+
+        # Auto-inject prefixes if not already declared
+        prefixes = (
+            "PREFIX mnf: <http://example.org/manifest#>\n"
+            "PREFIX ais: <http://example.org/ais#>\n"
+            "PREFIX pm: <http://example.org/polymarket#>\n"
+            "PREFIX fsq: <http://example.org/foursquare#>\n"
+            "PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\n"
+            "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\n"
+            "PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>\n"
+        )
+        if "PREFIX" not in query.upper().split("SELECT")[0]:
+            query = prefixes + query
+
+        try:
+            results = app.graph.sparql(query)
+        except Exception as e:
+            return f"SPARQL error: {e}"
+
+        if not results:
+            return "Query returned no results."
+
+        columns = list(results[0].keys())
+        rows = [[row.get(c, "") for c in columns] for row in results]
+        return _format_markdown_table(columns, rows)
+
+    # -----------------------------------------------------------------
+    # setup_views — generate CREATE VIEW statements for client-side DuckDB
+    # -----------------------------------------------------------------
+
+    @mcp.tool()
+    def setup_views(s3_prefix: str, ctx: Context = None) -> str:
+        """Generate CREATE VIEW statements for all datasets.
+
+        Produces DuckDB SQL that the client can execute on their own
+        connection to set up views pointing at Parquet data on S3.
+
+        Args:
+            s3_prefix: S3 path prefix, e.g. 's3://my-bucket/data'.
+        """
+        app: AppContext = ctx.request_context.lifespan_context
+        s3_prefix = s3_prefix.rstrip("/")
+
+        lines: list[str] = []
+        for ds_uri in app.graph.list_datasets():
+            ds = app.graph.get_dataset(ds_uri)
+            if not ds.partition_path_template:
+                lines.append(f"-- {ds.label} ({ds_uri}): no path template declared")
+                lines.append("")
+                continue
+
+            view_name = _label_to_view_name(ds.label)
+            glob = _template_to_glob(ds.partition_path_template)
+            full_path = f"{s3_prefix}/{glob}"
+
+            # Detect hive-style partitioning (path contains key=value segments)
+            hive = "=" in ds.partition_path_template
+
+            lines.append(f"-- {ds.label} ({ds_uri})")
+            lines.append(f"CREATE OR REPLACE VIEW {view_name} AS")
+            if hive:
+                lines.append(
+                    f"SELECT * FROM read_parquet('{full_path}', "
+                    f"hive_partitioning=true);"
+                )
+            else:
+                lines.append(f"SELECT * FROM read_parquet('{full_path}');")
+            lines.append("")
+
+        return "\n".join(lines).rstrip()
 
     return mcp

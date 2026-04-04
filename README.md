@@ -201,6 +201,8 @@ On startup the server:
 | URI | Description |
 |-----|-------------|
 | `manifest://docs/{domain}` | Full markdown documentation for a domain (e.g. `manifest://docs/ais`, `manifest://docs/polymarket`). Includes schemas, semantic types, ordering, relationships, deficiencies, and agent notes. |
+| `manifest://vocabulary` | The core Manifest vocabulary as raw Turtle (RDF). Defines all classes, properties, and named individuals. |
+| `manifest://description/{domain}` | A domain description as raw Turtle (RDF). Full dataset metadata: columns, types, layout, partitioning, ordering, derivations, relationships, deficiencies, provenance. |
 
 ### Tools
 
@@ -208,12 +210,22 @@ On startup the server:
 |------|------------|-------------|
 | `list_datasets` | — | Returns available datasets with view names, column counts, row counts, and documentation resource URIs. |
 | `query` | `sql: str`, `format: str` | Executes a DuckDB SQL query against registered views. Format is `"markdown"` (default, 100 row limit) or `"csv"` (denser, 500 row limit). Truncated results include a per-column statistical summary (type, min, max, approx unique, avg, null%) of the full result set. |
+| `setup_views` | `s3_prefix: str` | Generates `CREATE VIEW` statements for all datasets, combining the S3 prefix with each dataset's path template. For client-side DuckDB connected to S3. |
+| `sparql` | `query: str` | Executes a SPARQL query against the loaded Manifest graph. Standard prefixes (mnf:, ais:, pm:, etc.) are injected automatically. Returns results as a markdown table. |
 
 ### Typical agent workflow
 
+**Server-side query execution** (server has data access via `--data`):
 1. Call `list_datasets()` to discover what's available
-2. Read `manifest://docs/{domain}` for the domain you want to query — this gives the agent full schema context, semantic types, known deficiencies, and query guidance
+2. Read `manifest://docs/{domain}` for schema context
 3. Write SQL against the view names and call `query(sql)`
+
+**Client-side SQL generation** (client has own DuckDB on S3):
+1. Call `list_datasets()` to discover available datasets
+2. Read `manifest://description/{domain}` or `manifest://vocabulary` for the full RDF metadata
+3. Call `setup_views(s3_prefix)` to get `CREATE VIEW` statements, execute them on your DuckDB
+4. Use `sparql(query)` to drill into specific metadata when needed
+5. Write and execute SQL on your own connection
 
 ### Client configuration
 

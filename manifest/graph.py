@@ -180,7 +180,12 @@ class ManifestGraph:
         file_format = _label_or_str(self.g, self.g.value(layout, MNF.fileFormat)) if layout else "Parquet"
 
         partition = self.g.value(dataset, MNF.partitionedBy)
-        path_template = _lit_str(self.g.value(partition, MNF.pathTemplate)) if partition else None
+        # Prefer dataset-level pathTemplate (resolved, concrete) over scheme-level (shared)
+        ds_template = self.g.value(dataset, MNF.pathTemplate)
+        if ds_template is not None:
+            path_template = _lit_str(ds_template)
+        else:
+            path_template = _lit_str(self.g.value(partition, MNF.pathTemplate)) if partition else None
         granularity = _label_or_str(self.g, self.g.value(partition, MNF.partitionGranularity)) if partition else None
 
         # Handle CompositePartitionScheme

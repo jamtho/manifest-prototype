@@ -3,9 +3,13 @@
 import duckdb
 import pytest
 
+from manifest.graph import ManifestGraph
 from manifest.server import (
     _format_csv,
     _format_markdown_table,
+    _label_to_view_name,
+    _load_desc_ttl,
+    _load_vocab_ttl,
     _summarise_query,
     _template_to_glob,
 )
@@ -140,3 +144,116 @@ class TestSummariseQuery:
         # SUMMARIZE on empty result may return column info or nothing
         # either way, it shouldn't crash
         assert isinstance(result, str)
+
+
+# ---------------------------------------------------------------------------
+# Manifest graph fixture (used by setup_views and SPARQL tests)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def graph():
+    g = ManifestGraph()
+    g.load_directory("vocabularies/")
+    g.load_directory("descriptions/")
+    return g
+
+
+# ---------------------------------------------------------------------------
+# _load_vocab_ttl / _load_desc_ttl
+# ---------------------------------------------------------------------------
+
+
+class TestLoadTtl:
+    def test_vocab_loads(self):
+        vocab = _load_vocab_ttl(["vocabularies/"])
+        assert "mnf:Dataset" in vocab
+        assert "mnf:Column" in vocab
+        # Should not include shapes
+        assert "sh:NodeShape" not in vocab
+
+    def test_desc_loads(self):
+        descs = _load_desc_ttl(["descriptions/"])
+        assert "ais" in descs
+        assert "polymarket" in descs
+        assert "foursquare" in descs
+        assert "ais:DailyBroadcasts" in descs["ais"]
+
+
+# ---------------------------------------------------------------------------
+# setup_views logic
+# ---------------------------------------------------------------------------
+
+
+class TestSetupViews:
+    def test_ais_datasets_get_unique_paths(self, graph):
+        """AIS broadcasts and index should have distinct path templates."""
+        bc = graph.get_dataset("ais:DailyBroadcasts")
+        ix = graph.get_dataset("ais:DailyIndex")
+        # Both have templates (from the partition scheme)
+        assert bc.partition_path_template is not None
+        assert ix.partition_path_template is not None
+
+    def test_polymarket_datasets_get_per_dataset_paths(self, graph):
+        """Each Polymarket dataset should have its own resolved path."""
+        templates = set()
+        pm_datasets = [
+            "pm:MarketSnapshots", "pm:EventSnapshots", "pm:PriceSnapshots",
+            "pm:OrderbookSnapshots", "pm:Trades", "pm:HolderSnapshots",
+            "pm:Tags", "pm:Series", "pm:Sports",
+        ]
+        for uri in pm_datasets:
+            ds = graph.get_dataset(uri)
+            assert ds.partition_path_template is not None, f"{uri} has no template"
+            templates.add(ds.partition_path_template)
+        # All 9 should be distinct
+        assert len(templates) == 9
+
+    def test_hive_detection(self, graph):
+        """Polymarket templates contain '=' and should trigger hive_partitioning."""
+        ds = graph.get_dataset("pm:MarketSnapshots")
+        assert "=" in ds.partition_path_template
+
+    def test_glob_conversion(self):
+        """Polymarket-style template should glob correctly."""
+        template = "data/parquet/gamma/markets/dt={date}/hour={hour}.parquet"
+        glob = _template_to_glob(template)
+        assert glob == "data/parquet/gamma/markets/dt=*/hour=*.parquet"
+
+    def test_view_names_unique(self, graph):
+        """All datasets should produce distinct view names."""
+        names = set()
+        for uri in graph.list_datasets():
+            ds = graph.get_dataset(uri)
+            names.add(_label_to_view_name(ds.label))
+        assert len(names) == len(graph.list_datasets())
+
+
+# ---------------------------------------------------------------------------
+# SPARQL (via ManifestGraph.sparql)
+# ---------------------------------------------------------------------------
+
+
+class TestSparql:
+    def test_list_datasets(self, graph):
+        results = graph.sparql(
+            "PREFIX mnf: <http://example.org/manifest#> "
+            "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> "
+            "SELECT ?ds WHERE { ?ds rdf:type mnf:Dataset }"
+        )
+        uris = [r["ds"] for r in results]
+        assert any("DailyBroadcasts" in u for u in uris)
+        assert any("MarketSnapshots" in u for u in uris)
+
+    def test_column_query(self, graph):
+        results = graph.sparql(
+            "PREFIX mnf: <http://example.org/manifest#> "
+            "PREFIX ais: <http://example.org/ais#> "
+            "SELECT ?name WHERE { "
+            "  ais:DailyBroadcasts mnf:hasColumn ?col . "
+            "  ?col mnf:columnName ?name "
+            "}"
+        )
+        names = [r["name"] for r in results]
+        assert "mmsi" in names
+        assert "latitude" in names
