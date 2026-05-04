@@ -28,7 +28,7 @@ Hourly snapshots of all active Polymarket markets from the Gamma API. ~33,500 ma
   
 **Schema:** mnf:InferredSchema
   
-**Path template:** `data/parquet/{stream}/dt={date}/hour={hour}.parquet`
+**Path template:** `data/parquet/gamma/markets/dt={date}/hour={hour}.parquet`
   
 **Entity key:** `id`
 
@@ -102,7 +102,7 @@ Hourly snapshots of Polymarket events from the Gamma API. ~7,900 events per snap
   
 **Schema:** mnf:InferredSchema
   
-**Path template:** `data/parquet/{stream}/dt={date}/hour={hour}.parquet`
+**Path template:** `data/parquet/gamma/events/dt={date}/hour={hour}.parquet`
   
 **Entity key:** `id`
 
@@ -149,7 +149,7 @@ Hourly snapshots of CLOB token prices and midpoints. ~2,000 tokens polled every 
   
 **Schema:** mnf:InferredSchema
   
-**Path template:** `data/parquet/{stream}/dt={date}/hour={hour}.parquet`
+**Path template:** `data/parquet/clob/prices/dt={date}/hour={hour}.parquet`
   
 **Entity key:** `token_id`
 
@@ -182,7 +182,7 @@ Hourly snapshots of orderbook state for top 100 active tokens. Polled every 2 mi
   
 **Schema:** mnf:InferredSchema
   
-**Path template:** `data/parquet/{stream}/dt={date}/hour={hour}.parquet`
+**Path template:** `data/parquet/clob/books/dt={date}/hour={hour}.parquet`
   
 **Entity key:** `asset_id`
 
@@ -222,7 +222,7 @@ Hourly files of recent trades from the Data API. 100 trades polled every 60 seco
   
 **Schema:** mnf:InferredSchema
   
-**Path template:** `data/parquet/{stream}/dt={date}/hour={hour}.parquet`
+**Path template:** `data/parquet/data_api/trades/dt={date}/hour={hour}.parquet`
 
 ### Columns
 
@@ -268,7 +268,7 @@ Hourly snapshots of top 20 holders per token for first 50 known markets. Polled 
   
 **Schema:** mnf:InferredSchema
   
-**Path template:** `data/parquet/{stream}/dt={date}/hour={hour}.parquet`
+**Path template:** `data/parquet/data_api/holders/dt={date}/hour={hour}.parquet`
   
 **Entity key:** `condition_id`
 
@@ -303,7 +303,7 @@ Hourly snapshots of top 20 holders per token for first 50 known markets. Polled 
   
 Near-static reference table of tags used to categorize markets. Refreshed daily. Columns: _fetched_at, _source, id, label, slug, publishedAt, createdAt, updatedAt, requiresTranslation.
   
-**Path template:** `data/parquet/{stream}/dt={date}/hour={hour}.parquet`
+**Path template:** `data/parquet/gamma/tags/dt={date}/hour={hour}.parquet`
 
 ### Columns
 
@@ -318,7 +318,7 @@ Near-static reference table of tags used to categorize markets. Refreshed daily.
   
 Reference table of market series (recurring market groups). ~200 entries, refreshed daily. Columns: _fetched_at, _source, id, title, ticker, slug, seriesType, recurrence, active, closed, volume, volume24hr, liquidity, commentCount.
   
-**Path template:** `data/parquet/{stream}/dt={date}/hour={hour}.parquet`
+**Path template:** `data/parquet/gamma/series/dt={date}/hour={hour}.parquet`
 
 ### Columns
 
@@ -333,7 +333,7 @@ Reference table of market series (recurring market groups). ~200 entries, refres
   
 Reference table of sport categories for sports betting markets. ~100 entries, refreshed daily. Columns: _fetched_at, _source, id, sport, image, resolution, ordering, tags, series.
   
-**Path template:** `data/parquet/{stream}/dt={date}/hour={hour}.parquet`
+**Path template:** `data/parquet/gamma/sports/dt={date}/hour={hour}.parquet`
 
 ### Columns
 

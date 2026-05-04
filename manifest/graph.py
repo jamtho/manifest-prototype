@@ -23,6 +23,9 @@ MNF = Namespace("http://example.org/manifest#")
 AIS = Namespace("http://example.org/ais#")
 PM = Namespace("http://example.org/polymarket#")
 FSQ = Namespace("http://example.org/foursquare#")
+BVTK = Namespace("http://example.org/beaver-testing/knowledge#")
+KS = Namespace("http://example.org/beaver-testing/keystone#")
+DW = Namespace("http://example.org/beaver-testing/dw#")
 RDF = Namespace("http://www.w3.org/1999/02/22-rdf-syntax-ns#")
 RDFS = Namespace("http://www.w3.org/2000/01/rdf-schema#")
 XSD = Namespace("http://www.w3.org/2001/XMLSchema#")
@@ -35,6 +38,7 @@ def _str(node: Node | None) -> str:
     s = str(node)
     for prefix, ns in [("mnf:", str(MNF)), ("ais:", str(AIS)),
                         ("pm:", str(PM)), ("fsq:", str(FSQ)),
+                        ("bvtk:", str(BVTK)), ("ks:", str(KS)), ("dw:", str(DW)),
                         ("rdfs:", str(RDFS)), ("xsd:", str(XSD))]:
         if s.startswith(ns):
             return prefix + s[len(ns):]
@@ -94,6 +98,9 @@ class ManifestGraph:
         self.g.bind("ais", AIS)
         self.g.bind("pm", PM)
         self.g.bind("fsq", FSQ)
+        self.g.bind("bvtk", BVTK)
+        self.g.bind("ks", KS)
+        self.g.bind("dw", DW)
         self.g.bind("rdfs", RDFS)
         self.g.bind("xsd", XSD)
 
@@ -378,6 +385,9 @@ class ManifestGraph:
             "ais": AIS,
             "pm": PM,
             "fsq": FSQ,
+            "bvtk": BVTK,
+            "ks": KS,
+            "dw": DW,
             "rdfs": RDFS,
             "xsd": XSD,
         }

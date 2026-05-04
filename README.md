@@ -236,7 +236,7 @@ The core vocabulary was extended once — when modelling Polymarket data surface
 
 ## Domain Examples
 
-Manifest ships with three domain descriptions that together exercise the full vocabulary:
+Manifest ships with three Parquet-shaped domain descriptions that together exercise the core vocabulary:
 
 | | AIS Maritime Data | Polymarket Prediction Markets | Foursquare Places |
 |-|-------------------|-------------------------------|-------------------|
@@ -248,6 +248,10 @@ Manifest ships with three domain descriptions that together exercise the full vo
 | **Schema** | Fixed (declared) | Inferred (Polars from JSON) | Fixed |
 | **Cross-dataset links** | Aggregation (broadcasts -> index) | Foreign keys + entity identity | Foreign key (places -> categories) |
 | **Key patterns** | Ordering semantics, aggregation, column groups | Entity keys, embedded JSON, allowed values, composite partitions | Sharded files, struct types, list-to-scalar FK |
+
+A fourth description, `beaver_description.ttl`, covers two MySQL databases — `keystone` (OpenStack identity service from CSAIL Stata's deployment, heavily anonymised) and `dw` (MIT's institutional data warehouse, real campus data). The data is sourced from the dumps released as part of the [BEAVER text-to-SQL benchmark](https://peterbaile.github.io/beaver/), but the description is general-purpose: it captures structural facts (anonymisation namespaces, soft FKs, sentinel values, parallel-table conventions, case conventions, etc.) that any consumer writing SQL against these databases would benefit from, without leaking information about any particular benchmark question set. It's intended as LLM context for SQL generation, not for the validation engine, and is the kind of description the project's MCP server is built to serve. The description stress-tests the vocabulary into territory the original Parquet-shaped domains didn't cover — soft and polymorphic foreign keys, multi-namespace anonymisation (where joining on what looks like the same identifier silently returns zero rows), sentinel-string-as-NULL, parallel/duplicate tables, SCD-2 history, MySQL reserved-word table names. Inline `[BVT-K-GAP-N]` tags against the inventory in [`docs/vocabulary-evolution.md`](docs/vocabulary-evolution.md) flag where modelling hit the vocabulary's limits; round 1 of evolution resolved five of those (file formats, row counts, soft-FK marker, identifier namespaces, case conventions).
+
+Coverage detail: keystone is fully described (17 populated tables + 4 schema-only federation tables). All 97 dw tables are present — most as rich descriptions, the rest as schema-only stubs in a "PART 3 (continued): DW — schema stubs" section near the end of the file. The stubs (lookup / history / mirror tables) carry only column names and types; they're a clearly-marked extension point for upgrade as further investigations land.
 
 ## Structure
 
@@ -272,6 +276,7 @@ manifest-toolkit/
 │   ├── ais_description.ttl           # NOAA AIS maritime data
 │   ├── polymarket_description.ttl    # Polymarket prediction-market data
 │   ├── foursquare_description.ttl    # Foursquare Open Source Places data
+│   ├── beaver_description.ttl        # keystone (OpenStack) + dw (MIT data warehouse) MySQL databases
 │   └── generated/                    # Markdown tables (regenerate with mnf generate-docs)
 ├── tests/
 │   └── test_server.py               # MCP server helper tests
