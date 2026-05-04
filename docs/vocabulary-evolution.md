@@ -243,3 +243,124 @@ The original README noted: *"The core vocabulary should not need to change for n
 - Cross-dataset entity identity is fundamental to data integration
 
 None of these are Polymarket-specific. The vocabulary was incomplete, not wrongly designed.
+
+---
+
+## Round 2: keystone + dw MySQL databases
+
+Two MySQL databases — `keystone` (OpenStack identity service) and `dw` (MIT institutional data warehouse), sourced from the BEAVER benchmark dumps — brought a different shape than the existing Parquet-shaped descriptions: live RDBMS storage, anonymisation as a first-class fact, soft and polymorphic FKs, sentinel-string-as-NULL, parallel/duplicate tables, and roughly 100 datasets in a single description (vs 2–9 in the AIS / Polymarket / Foursquare descriptions). The description was written first using workarounds, with 29 inline `[BVT-K-GAP-N]` tags pointing at limits in the core vocabulary. This first round of evolution then addressed five of them — chosen for SQL-correctness impact and additive simplicity.
+
+### GAP-A — File formats beyond Parquet/CSV/ORC
+
+The original `mnf:FileFormat` enumerated only `Parquet`, `CSV`, and `ORC`. The keystone and dw datasets are accessed via a live MySQL connection (`mysql://{db}/{table}`), with no file at all. Other domains in the same release also had JSON, JSONL, and plain-text artefacts.
+
+**Resolution.** Extended `mnf:FileFormat` with a set of additive individuals covering both text-based files and live-RDBMS tables:
+
+```turtle
+mnf:JSON      a mnf:FileFormat .  # one JSON value per file
+mnf:JSONL     a mnf:FileFormat .  # newline-delimited
+mnf:NDJSON    a mnf:FileFormat .  # synonym for JSONL
+mnf:PlainText a mnf:FileFormat .
+mnf:Markdown  a mnf:FileFormat .
+mnf:MySQLTable      a mnf:FileFormat .
+mnf:PostgreSQLTable a mnf:FileFormat .
+mnf:SQLiteTable     a mnf:FileFormat .
+```
+
+The keystone+dw description's `bvtk:MySQLTable` placeholder was deleted in favour of `mnf:MySQLTable`. The same RDBMS set works for any other live-database description (Postgres warehouses, SQLite analytical stores).
+
+### GAP-1/2 — Row-count snapshots and empty-table markers
+
+The investigations behind the keystone+dw description carried specific row counts ("user has 944 rows", "fclt_rooms_hist has 5,042,544 rows") that matter for query planning, but the only place to put them was inside `rdfs:comment`. Empty-but-schema-present tables (`federated_user`, the four federation tables) likewise had only a `KnownDeficiency` saying "empty in this dump" — no first-class flag.
+
+**Resolution.** Added `mnf:rowCountSnapshot` (xsd:integer) on `Dataset`. It's a snapshot — not a guaranteed invariant — and may drift as the upstream changes; the property is optional and may be omitted for streaming or unbounded datasets where a count is meaningless. Empty tables collapse to `mnf:rowCountSnapshot 0`, eliminating the need for a separate empty marker.
+
+```turtle
+ks:user a mnf:Dataset ;
+    mnf:rowCountSnapshot 944 .
+
+ks:federated_user a mnf:Dataset ;
+    mnf:rowCountSnapshot 0 ;
+    mnf:hasKnownDeficiency ks:deficiency_empty_federation .
+```
+
+All keystone and rich-described dw datasets are annotated; the schema-stub dw tables carry it where the count is known (zero for the empty tables). SHACL validates the property as `xsd:integer >= 0` with at most one occurrence.
+
+### GAP-4 — Soft (un-declared) foreign keys
+
+`mnf:ForeignKey` couldn't distinguish FKs declared and enforced in upstream DDL from FKs that exist by convention but aren't enforced. This matters: for soft FKs the consumer needs to know whether to trust the join. The keystone schema mixes declared and soft (e.g. `assignment.role_id` is soft, every value happens to resolve), and the dw schema has *no* declared FKs at all — every relationship is soft. Several soft FKs have empirically partial integrity (one orphaned `credential.user_id`, eleven orphaned `trust.project_id`, etc.).
+
+**Resolution.** Added `mnf:declared` (xsd:boolean) on `ForeignKey`. Absence of the property is treated as `true` — the existing Parquet-shaped descriptions don't need updating. Set to `false` for soft FKs:
+
+```turtle
+ks:fk_credential_user a mnf:ForeignKey ;
+    mnf:declared false ;
+    mnf:foreignKeyFrom ks:credential_user_id ;
+    mnf:foreignKeyTo ks:user_id ;
+    mnf:referentialIntegrity mnf:PartialIntegrity .
+```
+
+The `mnf:referentialIntegrity` property already captured the *empirical* situation; `mnf:declared` captures the *upstream contract*. They're orthogonal.
+
+### GAP-22 — Disjoint identifier namespaces
+
+The single most consequential gap. `dw` has two independent MIT_ID anonymisations: Namespace A in `employee_directory`, `subject_offered.RESPONSIBLE_FACULTY_MIT_ID`, `moira_list_detail.MOIRA_LIST_MEMBER_MIT_ID` etc., and Namespace B in `se_person`, `hr_faculty_roster`, `warehouse_users`. Same logical person, different anonymised IDs in each upstream system. Joining across the two on MIT_ID returns *zero rows* — silent and convincing.
+
+A SQL author looking only at the schema and a `mnf:SameEntity` declaration can't tell. The previous workaround was to declare two separate semantic types (`dw:MITID_NamespaceA`, `dw:MITID_NamespaceB`) with prose comments warning against cross-joins. Better than nothing, but it relied on the consumer reading and remembering the comment.
+
+**Resolution.** Added `mnf:identifierNamespace` (xsd:string) on `SemanticType`:
+
+```turtle
+dw:MITID_NamespaceA a mnf:SemanticType ;
+    mnf:identifierNamespace "dw/mit_id/A" .
+
+dw:MITID_NamespaceB a mnf:SemanticType ;
+    mnf:identifierNamespace "dw/mit_id/B" .
+```
+
+Now the disjointness is machine-detectable: a SPARQL query for "which semantic types share a namespace?" answers correctly, and a consumer that includes the description can be told to refuse equality joins between columns whose semantic types have differing namespaces.
+
+The same machinery handles any case where two columns look mergeable but aren't — separate anonymisations of the same logical population, identifiers minted by different generators that happen to share a shape, etc.
+
+### GAP-25 — Case convention on join keys
+
+The same Kerberos username appears uppercase in `dw.person_auth_area.USER_NAME`, lowercase in `dw.roles_fin_pa.USERNAME` and `dw.moira_list_detail.MOIRA_LIST_MEMBER`, and proper-case-with-uppercase-shadow in `dw.employee_directory.KRB_NAME` / `KRB_NAME_UPPERCASE`. A direct equality join silently returns partial results.
+
+`mnf:SameEntity` was already telling the consumer "these columns identify the same person", but not "you'll need `UPPER()` on at least one side."
+
+**Resolution.** Added `mnf:caseConvention` on `Column` with three named individuals — `mnf:UpperCase`, `mnf:LowerCase`, `mnf:MixedCase`. The KRB_NAME columns are now annotated:
+
+```turtle
+dw:paa_user_name a mnf:Column ;
+    mnf:columnName "USER_NAME" ;
+    mnf:caseConvention mnf:UpperCase .
+
+dw:rfp_username a mnf:Column ;
+    mnf:columnName "USERNAME" ;
+    mnf:caseConvention mnf:LowerCase .
+```
+
+A consumer can detect the conflict and apply normalisation; SHACL validates the value is one of the three individuals.
+
+### What's queued
+
+The remaining high-priority gaps surfaced by this modelling round:
+
+| Gap | Edit | Why deferred |
+|-----|------|--------------|
+| GAP-19 | `mnf:Database` class with `hasDataset` and cluster taxonomy | Architectural; reshapes how the DW catalogue is modelled. |
+| GAP-L | `mnf_common.ttl` with shared semantic types (`UUIDHex32`, `Sha256Hex`, `MySQLBoolean`, `JSONInString`, `ISOTimestamp`, `USDAmount`) | Pure refactor; touches every existing description. |
+| GAP-3 | `mnf:PolymorphicForeignKey` with discriminator + variants | Larger structural change. |
+| GAP-5 | `mnf:sentinelValue` for in-band absence markers like `'<<null>>'` | Useful but lower frequency than 22/25. |
+
+### Summary of round-1 changes
+
+| Gap | New Terms | Backward-compat |
+|-----|-----------|----|
+| GAP-A   | `JSON`, `JSONL`, `NDJSON`, `PlainText`, `Markdown`, `MySQLTable`, `PostgreSQLTable`, `SQLiteTable` (FileFormat individuals) | Yes (additive) |
+| GAP-1/2 | `rowCountSnapshot` (property on Dataset) | Yes (additive, optional) |
+| GAP-4   | `declared` (boolean property on ForeignKey) | Yes (default true if absent) |
+| GAP-22  | `identifierNamespace` (property on SemanticType) | Yes (additive, optional) |
+| GAP-25  | `caseConvention` property + `UpperCase` / `LowerCase` / `MixedCase` individuals | Yes (additive, optional) |
+
+All five additions are purely additive. No existing description requires updating; new descriptions can adopt them incrementally.

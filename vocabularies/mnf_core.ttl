@@ -63,6 +63,16 @@ mnf:partitionedBy a rdf:Property ;
     rdfs:range mnf:PartitionScheme ;
     rdfs:comment "Declares how a dataset is split across physical files." .
 
+mnf:rowCountSnapshot a rdf:Property ;
+    rdfs:domain mnf:Dataset ;
+    rdfs:range xsd:integer ;
+    rdfs:comment """Observed row count at the time the description was
+        written. Useful for query planning and cardinality estimation,
+        and as a first-class empty-table marker (rowCountSnapshot 0).
+        This is a snapshot, not a guarantee — it may drift as the
+        upstream changes. Optional and may be omitted for unbounded
+        / streaming datasets where a count is not meaningful.""" .
+
 # --- Column properties ---
 
 mnf:columnName a rdf:Property ;
@@ -86,10 +96,31 @@ mnf:nullable a rdf:Property ;
     rdfs:range xsd:boolean ;
     rdfs:comment "Whether null values are expected/permitted." .
 
+mnf:caseConvention a rdf:Property ;
+    rdfs:domain mnf:Column ;
+    rdfs:range mnf:CaseConvention ;
+    rdfs:comment """Casing of this column's string values. Two columns that
+        identify the same logical entity (mnf:SameEntity / mnf:ForeignKey)
+        but have different caseConvention values need UPPER() or LOWER()
+        normalisation on at least one side; equality joins return partial
+        or zero results otherwise.""" .
+
 mnf:memberOf a rdf:Property ;
     rdfs:domain mnf:Column ;
     rdfs:range mnf:ColumnGroup ;
     rdfs:comment "Links a column to a column group it participates in." .
+
+# --- Case convention individuals ---
+
+mnf:CaseConvention a rdfs:Class ;
+    rdfs:comment "Casing applied to a column's string values." .
+
+mnf:UpperCase a mnf:CaseConvention ; rdfs:label "uppercase" ;
+    rdfs:comment "All values are uppercase." .
+mnf:LowerCase a mnf:CaseConvention ; rdfs:label "lowercase" ;
+    rdfs:comment "All values are lowercase." .
+mnf:MixedCase a mnf:CaseConvention ; rdfs:label "mixed-case" ;
+    rdfs:comment "Values use multiple cases; case is meaningful and preserved." .
 
 # --- ColumnGroup properties ---
 
@@ -182,6 +213,17 @@ mnf:unit a rdf:Property ;
     rdfs:domain mnf:SemanticType ;
     rdfs:range xsd:string ;
     rdfs:comment "The unit of measurement (e.g. 'degrees', 'knots', 'metres')." .
+
+mnf:identifierNamespace a rdf:Property ;
+    rdfs:domain mnf:SemanticType ;
+    rdfs:range xsd:string ;
+    rdfs:comment """A namespace string identifying which population of values
+        this type's values are drawn from. Two SemanticTypes with different
+        identifierNamespace values are NOT joinable directly even if their
+        physical types and value shapes match. Motivating case: separate
+        anonymisations of the same logical entity in different upstream
+        systems can produce disjoint identifier sets that look identical
+        but never overlap.""" .
 
 mnf:ValueRange a rdfs:Class .
 mnf:minInclusive a rdf:Property ; rdfs:domain mnf:ValueRange ; rdfs:range xsd:decimal .
@@ -470,6 +512,24 @@ mnf:FileFormat a rdfs:Class ;
 mnf:Parquet a mnf:FileFormat ; rdfs:label "Parquet" .
 mnf:CSV     a mnf:FileFormat ; rdfs:label "CSV" .
 mnf:ORC     a mnf:FileFormat ; rdfs:label "ORC" .
+
+# Text-based formats — many domains use these as a primary representation.
+mnf:JSON      a mnf:FileFormat ; rdfs:label "JSON" ;
+    rdfs:comment "A single JSON value per file (object, array, or scalar)." .
+mnf:JSONL     a mnf:FileFormat ; rdfs:label "JSONL" ;
+    rdfs:comment "One JSON value per line (a.k.a. newline-delimited JSON / NDJSON)." .
+mnf:NDJSON    a mnf:FileFormat ; rdfs:label "NDJSON" ;
+    rdfs:comment "Synonym for JSONL — newline-delimited JSON." .
+mnf:PlainText a mnf:FileFormat ; rdfs:label "Plain Text" ;
+    rdfs:comment "Unstructured text (e.g. prompt files, READMEs)." .
+mnf:Markdown  a mnf:FileFormat ; rdfs:label "Markdown" .
+
+# Live-RDBMS table formats — for datasets accessed via a connection rather
+# than a file. Path templates for these typically use a connection-style
+# scheme (e.g. mysql://{db}/{table}, postgres://{schema}/{table}).
+mnf:MySQLTable      a mnf:FileFormat ; rdfs:label "MySQL Table" .
+mnf:PostgreSQLTable a mnf:FileFormat ; rdfs:label "PostgreSQL Table" .
+mnf:SQLiteTable     a mnf:FileFormat ; rdfs:label "SQLite Table" .
 
 # --- Row ordering ---
 
@@ -897,6 +957,17 @@ mnf:referentialIntegrity a rdf:Property ;
     rdfs:domain mnf:ForeignKey ;
     rdfs:range mnf:ReferentialIntegrityLevel ;
     rdfs:comment "Expected referential integrity level." .
+
+mnf:declared a rdf:Property ;
+    rdfs:domain mnf:ForeignKey ;
+    rdfs:range xsd:boolean ;
+    rdfs:comment """Whether the foreign key is declared and enforced in the
+        upstream schema (e.g. a MySQL FOREIGN KEY constraint). Absence of
+        this property is treated as `true` — most modern Parquet-shaped
+        descriptions deal in declared FKs. Set to `false` for soft FKs:
+        relationships intended by convention but not enforced by the
+        upstream system, where empirical referential integrity may be
+        partial.""" .
 
 # --- Referential integrity level individuals ---
 

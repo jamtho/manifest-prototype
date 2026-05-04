@@ -98,6 +98,13 @@ mnf:DatasetShape a sh:NodeShape ;
         # Dataset-level pathTemplate overrides the partition scheme's template,
         # resolving shared placeholders to this dataset's concrete path.
     ] ;
+    sh:property [
+        sh:path mnf:rowCountSnapshot ;
+        sh:maxCount 1 ;
+        sh:datatype xsd:integer ;
+        sh:minInclusive 0 ;
+        sh:message "rowCountSnapshot must be a single non-negative integer." ;
+    ] ;
     # Note: datasets with rowSemantics=SnapshotRow SHOULD also declare
     # entityKey and snapshotTimestamp. This conditional expectation is
     # documented here rather than enforced, to keep shapes simple.
@@ -137,6 +144,12 @@ mnf:ColumnShape a sh:NodeShape ;
         sh:maxCount 1 ;
         sh:node mnf:EmbeddedStructureShape ;
     ] ;
+    sh:property [
+        sh:path mnf:caseConvention ;
+        sh:maxCount 1 ;
+        sh:in ( mnf:UpperCase mnf:LowerCase mnf:MixedCase ) ;
+        sh:message "caseConvention must be UpperCase, LowerCase, or MixedCase." ;
+    ] ;
     .
 
 
@@ -171,6 +184,12 @@ mnf:SemanticTypeShape a sh:NodeShape ;
         sh:path mnf:hasAllowedValues ;
         sh:maxCount 1 ;
         sh:node mnf:AllowedValuesShape ;
+    ] ;
+    sh:property [
+        sh:path mnf:identifierNamespace ;
+        sh:maxCount 1 ;
+        sh:datatype xsd:string ;
+        sh:message "identifierNamespace must be a single string." ;
     ] ;
     .
 
@@ -449,6 +468,12 @@ mnf:ForeignKeyShape a sh:NodeShape ;
         sh:maxCount 1 ;
         sh:in ( mnf:StrictIntegrity mnf:EventualIntegrity mnf:PartialIntegrity ) ;
         sh:message "referentialIntegrity must be Strict, Eventual, or Partial." ;
+    ] ;
+    sh:property [
+        sh:path mnf:declared ;
+        sh:maxCount 1 ;
+        sh:datatype xsd:boolean ;
+        sh:message "declared must be a single boolean (default: true if absent)." ;
     ] .
 
 
